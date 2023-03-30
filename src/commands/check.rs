@@ -73,7 +73,7 @@ fn run_check<'a>(
 	// We don't need to set the Modified Time, as it's not relevant to verification
 	// and it errors on filesystems that don't support setting a modified timestamp
 	archive.set_preserve_mtime(false);
-	archive.unpack(dst.parent().unwrap())?;
+	archive.unpack(dst.parent().expect("Expect Top level directory"))?;
 
 	// Manufacture an ephemeral workspace to ensure that even if the top-level
 	// package has a workspace we can still build our new crate.
@@ -197,7 +197,7 @@ fn check_readme<'a>(_ws: &Workspace<'a>, _pkg: &Package) -> Result<(), anyhow::E
 	unreachable!()
 }
 
-pub fn check<'a>(
+pub fn check_packages<'a>(
 	packages: &[Package],
 	ws: &Workspace<'a>,
 	build: bool,

@@ -32,11 +32,12 @@ pub fn release(
 		},
 		keep_going: false,
 	};
-
+	//TODO: Figure out Why this kind of delay is necessary for 10 minutes.
 	let delay = {
 		if packages.len() > 29 {
-			// more than 30, delay so we do not publish more than 30 in 10min.
-			21
+			// more than 30, delay so we do not publish more than 30 in 10min. 
+			// 20 seconds per publish so wait 21 to ensure at least a package is done
+			21 
 		} else {
 			// below the limit we just burst them out.
 			0

@@ -273,7 +273,7 @@ pub enum Command {
 		#[structopt(long)]
 		empty_is_failure: bool,
 
-		/// Write a graphviz dot of all crates to be release and their depedency relation
+		/// Write a graphviz dot of all crates to be release and their dependency relation
 		/// to the given path.
 		#[structopt(long = "dot-graph")]
 		dot_graph: Option<PathBuf>,
@@ -404,47 +404,49 @@ pub struct Opt {
 }
 
 fn make_pkg_predicate(
-	ws: &Workspace<'_>,
-	args: PackageSelectOptions,
+    ws: &Workspace<'_>,
+    args: PackageSelectOptions,
 ) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
-	let PackageSelectOptions {
-		packages,
-		skip,
-		ignore_pre_version,
-		ignore_publish,
-		changed_since,
-		include_pre_deps,
-	} = args;
+    let PackageSelectOptions {
+        packages,
+        skip,
+        ignore_pre_version,
+        ignore_publish,
+        changed_since,
+        include_pre_deps,
+    } = args;
 
-	if !packages.is_empty() {
-		if !skip.is_empty() || !ignore_pre_version.is_empty() {
-			anyhow::bail!(
-				"-p/--packages is mutually exlusive to using -s/--skip and -i/--ignore-version-pre"
-			);
-		}
-		if changed_since.is_some() {
-			anyhow::bail!("-p/--packages is mutually exlusive to using -c/--changed-since");
-		}
-	}
+    if !packages.is_empty() {
+        if !skip.is_empty() || !ignore_pre_version.is_empty() {
+            anyhow::bail!(
+                "-p/--packages is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
+            );
+        }
+        if changed_since.is_some() {
+            anyhow::bail!("-p/--packages is mutually exclusive to using -c/--changed-since");
+        }
+    }
 
-	let publish = move |p: &Package| {
-		// If publish is set to false or any registry, it is ignored by default
-		// unless overriden.
-		let value = ignore_publish || p.publish().is_none();
+    let publish = move |p: &Package| {
+        // If publish is set to false or any registry, it is ignored by default
+        // unless overriden.
+        let value = ignore_publish || p.publish().is_none();
 
-		trace!("{:}.publish={}", p.name(), value);
-		value
-	};
-	let check_version = move |p: &Package| return include_pre_deps && !p.version().pre.is_empty();
+        trace!("{:}.publish={}", p.name(), value);
+        value
+    };
+    let check_version = move |p: &Package| include_pre_deps && !p.version().pre.is_empty();
 
-	let changed = if let Some(changed_since) = &changed_since {
-		if !skip.is_empty() || !ignore_pre_version.is_empty() {
-			anyhow::bail!("-c/--changed-since is mutually exlusive to using -s/--skip and -i/--ignore-version-pre",);
-		}
-		Some(util::changed_packages(ws, changed_since)?)
-	} else {
-		None
-	};
+    let changed = if let Some(changed_since) = &changed_since {
+        if !skip.is_empty() || !ignore_pre_version.is_empty() {
+            anyhow::bail!(
+                "-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
+            );
+        }
+        Some(util::changed_packages(ws, changed_since)?)
+    } else {
+        None
+    };
 
 	Ok(move |p: &Package| {
 		if !publish(p) {
@@ -472,8 +474,8 @@ fn make_pkg_predicate(
 			}
 		}
 
-		true
-	})
+        true
+    })
 }
 
 fn verify_readme_feature() -> Result<(), anyhow::Error> {
@@ -483,7 +485,7 @@ fn verify_readme_feature() -> Result<(), anyhow::Error> {
 		anyhow::bail!("Readme related functionalities not available. Please re-install with gen-readme feature.")
 	}
 }
-
+//TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 	let _ = Logger::try_with_str(args.log.clone())?.start()?;
 	let mut c = CargoConfig::default().expect("Couldn't create cargo config");
@@ -526,7 +528,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			// (rightfully so!)
 			Workspace::new(&root_manifest, &c).context("Reading workspace failed")
 		};
-
+	//TODO: Seperate matching from Command implementations to make this a more readable codebase
 	match args.cmd {
 		Command::CleanDeps { pkg_opts, check_only } => {
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
@@ -820,7 +822,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 				}
 			}
 
-			commands::check(&packages, &ws, build, check_readme)
+			commands::check_packages(&packages, &ws, build, check_readme)
 		},
 		#[cfg(feature = "gen-readme")]
 		Command::GenReadme { pkg_opts, readme_mode, empty_is_failure } => {
@@ -869,7 +871,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 					verify_readme_feature()?;
 				}
 
-				commands::check(&packages, &ws, build, check_readme)?;
+				commands::check_packages(&packages, &ws, build, check_readme)?;
 			}
 
 			ws.config().shell().status(

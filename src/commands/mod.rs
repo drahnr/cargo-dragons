@@ -9,7 +9,7 @@ mod to_release;
 mod version;
 
 pub use add_owner::add_owner;
-pub use check::check;
+pub use check::check_packages;
 pub use clean_deps::clean_up_unused_dependencies;
 pub use de_dev_deps::deactivate_dev_dependencies;
 pub use release::release;

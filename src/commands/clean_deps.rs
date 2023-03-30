@@ -1,6 +1,5 @@
 use crate::util::{edit_each, edit_each_dep, members_deep, DependencyAction};
 use cargo::core::{package::Package, Workspace};
-// use log::trace;
 use std::process::Command;
 
 pub fn clean_up_unused_dependencies<P>(
