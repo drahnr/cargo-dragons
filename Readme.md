@@ -1,6 +1,6 @@
-# cargo [unleash em 🐉](https://github.com/paritytech/cargo-unleash)
+# cargo [dragons 🐉](https://github.com/drahnr/cargo-dragons)
 
-`cargo` release automation tooling for _massiv mono-repo_. Developed primarily for [Parity Substrate](https://github.com/paritytech/substrate).
+`cargo` release automation tooling for _massiv mono-repo_.
 
 ## Changes
 
