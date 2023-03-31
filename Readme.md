@@ -8,10 +8,7 @@ see [Changelog.md](./Changelog.md)
 
 ## Installation
 
-Use `cargo install` to install:
-```bash
-cargo install cargo-unleash --version 1.0.0-alpha.13
-```
+Use `cargo install --path .` to install.
 
 ## Usage
 
@@ -19,7 +16,7 @@ Try and have it report what it would do on your mono repo with
 
 ```bash
 
-cargo unleash em-dragons --dry-run
+cargo dragons unleash --dry-run
 ```
 
 There are more options available on the CLI, just run with `--help`:
@@ -28,7 +25,7 @@ There are more options available on the CLI, just run with `--help`:
 Release the crates of this massiv monorepo
 
 USAGE:
-    cargo-unleash [FLAGS] [OPTIONS] <SUBCOMMAND>
+    cargo-dragons [FLAGS] [OPTIONS] <SUBCOMMAND>
 
 FLAGS:
     -h, --help
@@ -56,7 +53,7 @@ SUBCOMMANDS:
     check          Check whether crates can be packaged
     clean-deps     Check the package(s) for unused dependencies
     de-dev-deps    Deactivate the `[dev-dependencies]`
-    em-dragons     Unleash ’em dragons
+    unleash        Unleash ’em dragons
     help           Prints this message or the help of the given subcommand(s)
     rename         Rename a package
     set            Set a field in all manifests
@@ -64,18 +61,18 @@ SUBCOMMANDS:
     version        Messing with versioning
 ```
 
-### em-dragons
+### unleash
 
-The main command is `cargo unleash em-dragons`, here is its help. All subcommands have extensive `--help` for you.
+The main command is `cargo dragons unleash`, here is its help. All subcommands have extensive `--help` for you.
 
 ```bash
-$ cargo-unleash em-dragons --help
+$ cargo-dragons unleash --help
 Unleash ’em dragons
 
 Package all selected crates, check them and attempt to publish them.
 
 USAGE:
-    cargo-unleash em-dragons [FLAGS] [OPTIONS]
+    cargo-dragons unleash [FLAGS] [OPTIONS]
 
 FLAGS:
         --build
@@ -150,32 +147,32 @@ OPTIONS:
 
 **Release all crates** not having the `-dev`-pre version set
 ```bash
-cargo-unleash em-dragons --ignore-pre-version dev
+cargo-dragons unleash --ignore-pre-version dev
 ```
 
 **Check if a PR can be released** (checking only changes in the PR compared to `main`)
 ```bash
-cargo-unleash check --changed-since=main
+cargo-dragons check --changed-since=main
 ```
 
 **Release all crates** not having `test` in the name
 ```bash
-cargo-unleash em-dragons --skip test
+cargo-dragons unleash --skip test
 ```
 
 **Set the pre-version to `-dev`**
 ```bash
-cargo-unleash version set-pre dev
+cargo-dragons version set-pre dev
 ```
 
 **Bump the pre-version**, so for e.g. from `alpha.1` to `alpha.2` or `beta.3` to `beta.4`:
 ```bash
-cargo-unleash version bump-pre
+cargo-dragons version bump-pre
 ```
 
 ## In the wild
 
-_You are using the tooling and want to be mentioned here–[create an issue](https://github.com/gnunicorn/cargo-unleash/issues/new)_
+_You are using the tooling and want to be mentioned here–[create an issue](https://github.com/gnunicorn/cargo-dragons/issues/new)_
 
  - [Parity Substrate](https://github.com/paritytech/substrate) automatic releasing via [Gitlab CI](https://github.com/paritytech/substrate/blob/master/.gitlab-ci.yml)
  - [Parity SS58-registry](https://github.com/paritytech/ss58-registry) automatic releasing via [Gitlab CI](https://github.com/paritytech/ss58-registry/blob/main/.gitlab-ci.yml)

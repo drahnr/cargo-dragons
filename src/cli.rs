@@ -336,7 +336,7 @@ pub enum Command {
 	/// Unleash 'em dragons
 	///
 	/// Package all selected crates, check them and attempt to publish them.
-	EmDragons {
+	Unleash {
 		/// Do not disable dev-dependencies
 		///
 		/// By default we disable dev-dependencies before the run.
@@ -383,7 +383,7 @@ pub enum Command {
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "cargo-unleash", about = "Release the crates of this massiv monorepo")]
+#[structopt(name = "cargo-dragons", about = "Release the crates of this massiv monorepo")]
 #[structopt(setting(ColorAuto), setting(ColoredHelp))]
 pub struct Opt {
 	/// The path to workspace manifest
@@ -548,14 +548,10 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 				anyhow::bail!("To change the name please use the rename command!");
 			}
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-			let type_value = {
-				if let Ok(v) = bool::from_str(&value) {
-					Value::from(v)
-				} else if let Ok(v) = i64::from_str(&value) {
-					Value::from(v)
-				} else {
-					Value::from(value)
-				}
+			let type_value =  if let Ok(v) = bool::from_str(&value).or_else(|_| Err(i64::from_str(&value))) {
+				Value::from(v)
+			} else {
+				Value::from(value)
 			};
 
 			commands::set_field(
@@ -841,7 +837,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 
 			commands::gen_all_readme(packages, &ws, readme_mode)
 		},
-		Command::EmDragons {
+		Command::Unleash {
 			dry_run,
 			no_check,
 			token,

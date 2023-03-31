@@ -139,14 +139,14 @@ where
 				}
 			}
 		}
+		let status = "Done";
+		let mut status_message = format!("{} dependencies updated", updates_count);
 		if updates_count == 0 {
-			c.shell().status("Done", "No dependency updates")?;
+			status_message = "No dependency updates".to_owned();
 		} else if updates_count == 1 {
-			c.shell().status("Done", "One dependency updated")?;
-		} else {
-			c.shell().status("Done", format!("{} dependencies updated", updates_count))?;
-		}
-
+			status_message = "One dependency updated".to_owned();
+		} 
+		c.shell().status(status, status_message)?;
 		Ok(())
 	})?;
 

@@ -7,7 +7,7 @@ fn check_include_pre() -> Result<(), Box<dyn std::error::Error>> {
 	let temp = assert_fs::TempDir::new()?;
 	temp.copy_from("tests/fixtures/include-pre", &["*.toml", "*.rs"])?;
 
-	let mut cmd = Command::cargo_bin("cargo-unleash")?;
+	let mut cmd = Command::cargo_bin("cargo-dragons")?;
 
 	cmd.arg("--manifest-path")
 		.arg(temp.path())

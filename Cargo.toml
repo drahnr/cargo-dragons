@@ -1,20 +1,19 @@
 [package]
-name = "cargo-unleash"
+name = "cargo-dragons"
 version = "1.0.0-alpha.dev"
-authors = ["Benjamin Kampmann <ben@gnunicorn.org>"]
 edition = "2021"
 rust-version = "1.56.1"
 license = "GPL-3.0"
-repository = "https://github.com/gnunicorn/cargo-unleash"
+repository = "https://github.com/drahnr/cargo-dragons"
 description = "Tooling to manage releasing of crates in massiv workspaces/monorepos"
 readme = "Readme.md"
-keywords = ["cargo", "publishing", "unleash", "workspaces", "monorepo"]
+keywords = ["cargo", "publishing", "dragons", "workspaces", "monorepo"]
 categories = ["development-tools", "development-tools::cargo-plugins"]
 
 exclude = [".gitignore", ".github/**"]
 
 [[bin]]
-name = "cargo-unleash"
+name = "cargo-dragons"
 path = "src/main.rs"
 
 [features]

@@ -192,31 +192,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-platform"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbdb825da8a5df079a43676dbe042702f1707b1109f713a01420fbb4cc71fa27"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "cargo-readme"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66dbfc9307f5b2429656e07533613cd3f26803fd2857fc33be22aa2711181d58"
-dependencies = [
- "clap 2.34.0",
- "lazy_static",
- "percent-encoding",
- "regex",
- "serde",
- "serde_derive",
- "toml",
-]
-
-[[package]]
-name = "cargo-unleash"
+name = "cargo-dragons"
 version = "1.0.0-alpha.dev"
 dependencies = [
  "anyhow",
@@ -239,6 +215,30 @@ dependencies = [
  "tar",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "cargo-platform"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbdb825da8a5df079a43676dbe042702f1707b1109f713a01420fbb4cc71fa27"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "cargo-readme"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66dbfc9307f5b2429656e07533613cd3f26803fd2857fc33be22aa2711181d58"
+dependencies = [
+ "clap 2.34.0",
+ "lazy_static",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_derive",
+ "toml",
 ]
 
 [[package]]

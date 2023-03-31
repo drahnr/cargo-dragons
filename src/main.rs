@@ -10,7 +10,7 @@ fn main() -> Result<(), anyhow::Error> {
 	let mut args = std::env::args();
 	argv.extend(args.next());
 	if let Some(h) = args.next() {
-		if h != "unleash" {
+		if h != "dragons" {
 			argv.push(h)
 		}
 	}

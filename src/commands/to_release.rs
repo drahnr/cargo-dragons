@@ -210,12 +210,11 @@ fn graphviz<'i, I: IntoIterator<Item = &'i Vec<NodeIndex>>, W: Write>(
 		};
 	let get_node_attributes =
 		|_graph: &Graph<Package, (), Directed, u32>, (idx, pkg): (NodeIndex, &Package)| -> String {
-			let label = format!(r#"label="{}:{}" "#, pkg.name(), pkg.version());
+			let mut label = format!(r#"label="{}:{}" "#, pkg.name(), pkg.version());
 			if cycle_indices.contains(&idx) {
-				label + "color=red"
-			} else {
-				label
+				label += "color=red"
 			}
+			label
 		};
 
 	let dot = Dot::with_attr_getters(graph, config, &get_edge_attributes, &get_node_attributes);
@@ -429,7 +428,7 @@ publish = false
 	}
 
 	fn test_tmp_dir(name: &'static str) -> PathBuf {
-		std::env::temp_dir().join("cargo-unleash").join(name)
+		std::env::temp_dir().join("cargo-dragons").join(name)
 	}
 
 	/// Setup the following directory structure

@@ -32,7 +32,7 @@ pub fn release(
 		},
 		keep_going: false,
 	};
-	//TODO: Figure out Why this kind of delay is necessary for 10 minutes.
+	//TODO: Add comments on limits of the API/why 30 is the threshold.
 	let delay = {
 		if packages.len() > 29 {
 			// more than 30, delay so we do not publish more than 30 in 10min. 
@@ -49,7 +49,7 @@ pub fn release(
 		if idx > 0 && delay > 0 {
 			c.shell().status(
 				"Waiting",
-				"published 30 crates – API limites require us to wait in between.",
+				"published 30 crates – API limits require us to wait in between.",
 			)?;
 			thread::sleep(Duration::from_secs(delay));
 		}
