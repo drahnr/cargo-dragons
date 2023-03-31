@@ -196,13 +196,13 @@ fn find_entrypoint_internal(current_dir: &Path) -> Result<PathBuf> {
 	// try lib.rs
 	let lib_rs = current_dir.join("src/lib.rs");
 	if lib_rs.exists() {
-		return Ok(lib_rs)
+		return Ok(lib_rs);
 	}
 
 	// try main.rs
 	let main_rs = current_dir.join("src/main.rs");
 	if main_rs.exists() {
-		return Ok(main_rs)
+		return Ok(main_rs);
 	}
 
 	// if no entrypoint is found, return an error
@@ -236,8 +236,9 @@ fn rewrite_matched_doc_link(caps: &Captures, pkg_name: &str, doc_uri: Option<&st
 		// Skip absolute links
 		Some(url) if url.as_str().starts_with("http") => caps[0].to_string(),
 		// Handle relative links to sibling crate
-		Some(url) if url.as_str().starts_with("../") =>
-			make_sibling_doc_link(caps.name("text").unwrap().as_str(), &url.as_str()[3..], doc_uri),
+		Some(url) if url.as_str().starts_with("../") => {
+			make_sibling_doc_link(caps.name("text").unwrap().as_str(), &url.as_str()[3..], doc_uri)
+		},
 		// Handle relative links to current crate
 		Some(url) => make_relative_doc_link(
 			caps.name("text").unwrap().as_str(),

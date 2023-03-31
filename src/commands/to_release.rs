@@ -107,7 +107,7 @@ where
 		.iter()
 		.filter_map(|&member| {
 			if ignored.contains(&member.name()) || already_published.contains(&member.name()) {
-				return None
+				return None;
 			}
 			Some((member.name(), graph.add_node(member.clone())))
 		})
@@ -176,7 +176,7 @@ where
 					.collect::<Vec<_>>()
 			})
 			.collect::<Vec<_>>();
-		return Err(ErrorWithCycles(cycles, anyhow::anyhow!("Contains cycles")))
+		return Err(ErrorWithCycles(cycles, anyhow::anyhow!("Contains cycles")));
 	}
 
 	// the output of `kosaraju_scc` is in reverse topological order, leafs first, which matches
@@ -264,8 +264,8 @@ publish = false
 
 		let toml_manifest =
 			dependencies.as_ref().iter().fold(toml_manifest, |toml_manifest, dep| {
-				toml_manifest +
-					format!(
+				toml_manifest
+					+ format!(
 						r###"
 {name} = "{version}""###,
 						name = dep.package_name(),

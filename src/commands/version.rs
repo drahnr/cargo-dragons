@@ -18,13 +18,13 @@ fn check_for_update(
 	let new_version = if let Some(v) = updates.get(&name) {
 		v
 	} else {
-		return DependencyAction::Untouched // we do not care about this entry
+		return DependencyAction::Untouched; // we do not care about this entry
 	};
 
 	match wrap {
 		DependencyEntry::Inline(info) => {
 			if !info.contains_key("path") {
-				return DependencyAction::Untouched // entry isn't local
+				return DependencyAction::Untouched; // entry isn't local
 			}
 
 			trace!("We changed the version of {:} to {:}", name, new_version);
@@ -38,11 +38,11 @@ fn check_for_update(
 				if force_update || !r.matches(new_version) {
 					trace!("Versions don't match anymore, updating.");
 					*v_req = Value::from(format!("{:}", new_version)).decorated(" ", "");
-					return DependencyAction::Mutated
+					return DependencyAction::Mutated;
 				}
 			} else if section == DependencySection::Dev {
 				trace!("No version found on dev dependency, ignoring.");
-				return DependencyAction::Untouched
+				return DependencyAction::Untouched;
 			} else {
 				// not yet present, we force set.
 				trace!("No version found, setting.");
@@ -51,12 +51,12 @@ fn check_for_update(
 					" version",
 					Value::from(format!("{:}", new_version)).decorated(" ", " "),
 				);
-				return DependencyAction::Mutated
+				return DependencyAction::Mutated;
 			}
 		},
 		DependencyEntry::Table(info) => {
 			if !info.contains_key("path") {
-				return DependencyAction::Untouched // entry isn't local
+				return DependencyAction::Untouched; // entry isn't local
 			}
 			if let Some(new_version) = updates.get(&name) {
 				trace!("We changed the version of {:} to {:}", name, new_version);
@@ -68,18 +68,18 @@ fn check_for_update(
 						.and_then(|s| VersionReq::parse(s).context("Parsing failed"))
 						.expect("Cargo enforces us using semver versions. qed");
 					if !force_update && r.matches(new_version) {
-						return DependencyAction::Untouched
+						return DependencyAction::Untouched;
 					}
 					trace!("Versions don't match anymore, updating.");
 				} else if section == DependencySection::Dev {
 					trace!("No version found on dev dependency {:}, ignoring.", name);
-					return DependencyAction::Untouched
+					return DependencyAction::Untouched;
 				} else {
 					trace!("No version found, setting.");
 				}
 				info["version"] =
 					Item::Value(Value::from(format!("{:}", new_version)).decorated(" ", ""));
-				return DependencyAction::Mutated
+				return DependencyAction::Mutated;
 			}
 		},
 	}

@@ -50,7 +50,7 @@ pub fn changed_packages<'a>(
 		for f in files.iter() {
 			if f.starts_with(root) {
 				packages.insert(m);
-				break
+				break;
 			}
 		}
 	}
@@ -156,7 +156,7 @@ where
 					})
 					.collect::<Vec<_>>()
 			} else {
-				continue
+				continue;
 			}
 		};
 		let t = root.get_mut(k).expect("Exists. qed").as_table_mut().expect("Is table. qed");

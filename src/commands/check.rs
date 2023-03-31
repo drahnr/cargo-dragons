@@ -262,10 +262,12 @@ pub fn check<'a>(
 		let pkg_ws = Workspace::ephemeral(pkg.clone(), c, Some(ws.target_dir()), true)?;
 		c.shell().status("Packing", &pkg)?;
 		match package(&pkg_ws, &opts) {
-			Ok(Some(mut rw_lock)) if rw_lock.len() == 1 =>
-				Ok((pkg_ws, rw_lock.pop().expect("we checked the counter"))),
-			Ok(Some(_rw_lock)) =>
-				Err(anyhow::anyhow!("Packing {:} produced more than one package", pkg.name())),
+			Ok(Some(mut rw_lock)) if rw_lock.len() == 1 => {
+				Ok((pkg_ws, rw_lock.pop().expect("we checked the counter")))
+			},
+			Ok(Some(_rw_lock)) => {
+				Err(anyhow::anyhow!("Packing {:} produced more than one package", pkg.name()))
+			},
 			Ok(None) => Err(anyhow::anyhow!("Failure packing {:}", pkg.name())),
 			Err(e) => {
 				cargo::display_error(&e, &mut c.shell());

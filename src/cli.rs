@@ -448,27 +448,27 @@ fn make_pkg_predicate(
 
 	Ok(move |p: &Package| {
 		if !publish(p) {
-			return false
+			return false;
 		}
 
 		if let Some(changed) = &changed {
-			return changed.contains(p) || check_version(p)
+			return changed.contains(p) || check_version(p);
 		}
 
 		if !packages.is_empty() {
 			trace!("going for matching against {:?}", packages);
-			return packages.contains(&p.name()) || check_version(p)
+			return packages.contains(&p.name()) || check_version(p);
 		}
 
 		if !skip.is_empty() || !ignore_pre_version.is_empty() {
 			let name = p.name();
 			if skip.iter().any(|r| r.is_match(&name)) {
-				return false
+				return false;
 			}
-			if !p.version().pre.is_empty() &&
-				ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
+			if !p.version().pre.is_empty()
+				&& ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
 			{
-				return false
+				return false;
 			}
 		}
 
@@ -513,7 +513,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 	let maybe_patch =
 		|ws, shouldnt_patch, predicate: &dyn Fn(&Package) -> bool| -> anyhow::Result<Workspace> {
 			if shouldnt_patch {
-				return Ok(ws)
+				return Ok(ws);
 			}
 
 			c.shell().status("Preparing", "Disabling Dev Dependencies")?;
@@ -610,7 +610,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 								if let Ok(pre) = Prerelease::new(&items.join(".")) {
 									v.pre = pre;
 								} else {
-									return None
+									return None;
 								}
 							}
 							Some(v)
@@ -781,7 +781,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 					anyhow::bail!("No Packages matching criteria. Exiting");
 				} else {
 					println!("No packages selected. All good. Exiting.");
-					return Ok(())
+					return Ok(());
 				}
 			}
 			println!(
@@ -816,7 +816,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 					anyhow::bail!("No Packages matching criteria. Exiting");
 				} else {
 					println!("No packages selected. All good. Exiting.");
-					return Ok(())
+					return Ok(());
 				}
 			}
 
@@ -833,7 +833,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 					anyhow::bail!("No Packages matching criteria. Exiting");
 				} else {
 					println!("No packages selected. All good. Exiting.");
-					return Ok(())
+					return Ok(());
 				}
 			}
 
@@ -860,7 +860,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 					anyhow::bail!("No Packages matching criteria. Exiting");
 				} else {
 					println!("No packages selected. All good. Exiting.");
-					return Ok(())
+					return Ok(());
 				}
 			}
 

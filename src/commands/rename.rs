@@ -12,13 +12,13 @@ fn check_for_update(
 	let new_name = if let Some(v) = updates.get(&name) {
 		v
 	} else {
-		return DependencyAction::Untouched // we do not care about this entry
+		return DependencyAction::Untouched; // we do not care about this entry
 	};
 
 	match wrap {
 		DependencyEntry::Inline(info) => {
 			if !info.contains_key("path") {
-				return DependencyAction::Untouched // entry isn't local
+				return DependencyAction::Untouched; // entry isn't local
 			}
 
 			trace!("We renamed {:} to {:}", name, new_name);
@@ -28,7 +28,7 @@ fn check_for_update(
 		},
 		DependencyEntry::Table(info) => {
 			if !info.contains_key("path") {
-				return DependencyAction::Untouched // entry isn't local
+				return DependencyAction::Untouched; // entry isn't local
 			}
 
 			info["package"] = Item::Value(Value::from(new_name.to_string()).decorated(" ", ""));
@@ -63,7 +63,7 @@ where
 
 	if updates.is_empty() {
 		c.shell().status("Done", "No changed applied")?;
-		return Ok(())
+		return Ok(());
 	}
 
 	c.shell().status("Updating", "Dependency tree")?;
