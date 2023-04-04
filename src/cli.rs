@@ -404,49 +404,49 @@ pub struct Opt {
 }
 
 fn make_pkg_predicate(
-    ws: &Workspace<'_>,
-    args: PackageSelectOptions,
+	ws: &Workspace<'_>,
+	args: PackageSelectOptions,
 ) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
-    let PackageSelectOptions {
-        packages,
-        skip,
-        ignore_pre_version,
-        ignore_publish,
-        changed_since,
-        include_pre_deps,
-    } = args;
+	let PackageSelectOptions {
+		packages,
+		skip,
+		ignore_pre_version,
+		ignore_publish,
+		changed_since,
+		include_pre_deps,
+	} = args;
 
-    if !packages.is_empty() {
-        if !skip.is_empty() || !ignore_pre_version.is_empty() {
-            anyhow::bail!(
+	if !packages.is_empty() {
+		if !skip.is_empty() || !ignore_pre_version.is_empty() {
+			anyhow::bail!(
                 "-p/--packages is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
             );
-        }
-        if changed_since.is_some() {
-            anyhow::bail!("-p/--packages is mutually exclusive to using -c/--changed-since");
-        }
-    }
+		}
+		if changed_since.is_some() {
+			anyhow::bail!("-p/--packages is mutually exclusive to using -c/--changed-since");
+		}
+	}
 
-    let publish = move |p: &Package| {
-        // If publish is set to false or any registry, it is ignored by default
-        // unless overriden.
-        let value = ignore_publish || p.publish().is_none();
+	let publish = move |p: &Package| {
+		// If publish is set to false or any registry, it is ignored by default
+		// unless overriden.
+		let value = ignore_publish || p.publish().is_none();
 
-        trace!("{:}.publish={}", p.name(), value);
-        value
-    };
-    let check_version = move |p: &Package| include_pre_deps && !p.version().pre.is_empty();
+		trace!("{:}.publish={}", p.name(), value);
+		value
+	};
+	let check_version = move |p: &Package| include_pre_deps && !p.version().pre.is_empty();
 
-    let changed = if let Some(changed_since) = &changed_since {
-        if !skip.is_empty() || !ignore_pre_version.is_empty() {
-            anyhow::bail!(
+	let changed = if let Some(changed_since) = &changed_since {
+		if !skip.is_empty() || !ignore_pre_version.is_empty() {
+			anyhow::bail!(
                 "-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
             );
-        }
-        Some(util::changed_packages(ws, changed_since)?)
-    } else {
-        None
-    };
+		}
+		Some(util::changed_packages(ws, changed_since)?)
+	} else {
+		None
+	};
 
 	Ok(move |p: &Package| {
 		if !publish(p) {
@@ -474,8 +474,8 @@ fn make_pkg_predicate(
 			}
 		}
 
-        true
-    })
+		true
+	})
 }
 
 fn verify_readme_feature() -> Result<(), anyhow::Error> {
@@ -548,11 +548,12 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 				anyhow::bail!("To change the name please use the rename command!");
 			}
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-			let type_value =  if let Ok(v) = bool::from_str(&value).or_else(|_| Err(i64::from_str(&value))) {
-				Value::from(v)
-			} else {
-				Value::from(value)
-			};
+			let type_value =
+				if let Ok(v) = bool::from_str(&value).or_else(|_| Err(i64::from_str(&value))) {
+					Value::from(v)
+				} else {
+					Value::from(value)
+				};
 
 			commands::set_field(
 				ws.members()

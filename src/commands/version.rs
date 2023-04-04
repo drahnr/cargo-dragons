@@ -145,7 +145,7 @@ where
 			status_message = "No dependency updates".to_owned();
 		} else if updates_count == 1 {
 			status_message = "One dependency updated".to_owned();
-		} 
+		}
 		c.shell().status(status, status_message)?;
 		Ok(())
 	})?;

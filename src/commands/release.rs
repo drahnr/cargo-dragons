@@ -35,9 +35,9 @@ pub fn release(
 	//TODO: Add comments on limits of the API/why 30 is the threshold.
 	let delay = {
 		if packages.len() > 29 {
-			// more than 30, delay so we do not publish more than 30 in 10min. 
+			// more than 30, delay so we do not publish more than 30 in 10min.
 			// 20 seconds per publish so wait 21 to ensure at least a package is done
-			21 
+			21
 		} else {
 			// below the limit we just burst them out.
 			0
