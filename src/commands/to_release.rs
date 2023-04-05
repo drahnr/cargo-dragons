@@ -210,11 +210,8 @@ fn graphviz<'i, I: IntoIterator<Item = &'i Vec<NodeIndex>>, W: Write>(
 		};
 	let get_node_attributes =
 		|_graph: &Graph<Package, (), Directed, u32>, (idx, pkg): (NodeIndex, &Package)| -> String {
-			let mut label = format!(r#"label="{}:{}" "#, pkg.name(), pkg.version());
-			if cycle_indices.contains(&idx) {
-				label += "color=red"
-			}
-			label
+			let color = if cycle_indices.contains(&idx) { "color=red" } else { "" };
+			format!(r#"label="{}:{}" {}"#, pkg.name(), pkg.version(), color)
 		};
 
 	let dot = Dot::with_attr_getters(graph, config, &get_edge_attributes, &get_node_attributes);
