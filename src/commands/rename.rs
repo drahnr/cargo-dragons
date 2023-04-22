@@ -47,19 +47,20 @@ where
 {
 	let c = ws.config();
 
-	let updates = edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
-		Ok(mapper(p).map(|new_name| {
-			c.shell()
-				.status("Renaming", format!("{:} -> {:}", p.name(), new_name))
-				.expect("Writing to the shell would have failed before. qed");
-			doc["package"]["name"] =
-				Item::Value(Value::from(new_name.to_string()).decorated(" ", ""));
-			(p.name().as_str().to_owned(), new_name)
-		}))
-	})?
-	.into_iter()
-	.flatten()
-	.collect::<HashMap<_, _>>();
+	let updates = HashMap::<String, String>::from_iter(
+		edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
+			Ok(mapper(p).map(|new_name| {
+				c.shell()
+					.status("Renaming", format!("{:} -> {:}", p.name(), new_name))
+					.expect("Writing to the shell would have failed before. qed");
+				doc["package"]["name"] =
+					Item::Value(Value::from(new_name.to_string()).decorated(" ", ""));
+				(p.name().as_str().to_owned(), new_name)
+			}))
+		})?
+		.into_iter()
+		.flatten(),
+	);
 
 	if updates.is_empty() {
 		c.shell().status("Done", "No changed applied")?;
@@ -74,10 +75,13 @@ where
 		updates_count += edit_each_dep(root, |a, _, b, _| check_for_update(a, b, &updates));
 
 		if let Some(Item::Table(table)) = root.get_mut("target") {
-			let keys = table
-				.iter()
-				.filter_map(|(k, v)| if v.is_table() { Some(k.to_owned()) } else { None })
-				.collect::<Vec<_>>();
+			let keys = Vec::from_iter(table.iter().filter_map(|(k, v)| {
+				if v.is_table() {
+					Some(k.to_owned())
+				} else {
+					None
+				}
+			}));
 
 			for k in keys {
 				if let Some(Item::Table(root)) = table.get_mut(&k) {

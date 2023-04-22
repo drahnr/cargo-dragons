@@ -2,6 +2,7 @@ use crate::util::members_deep;
 use cargo::{
 	core::{package::Package, Dependency, Source, SourceId, Workspace},
 	sources::registry::RegistrySource,
+	util::interning::InternedString,
 };
 use log::{trace, warn};
 use petgraph::{
@@ -29,10 +30,9 @@ where
 {
 	packages_to_release_inner::<F, D>(ws, predicate, write_dot_graph).map_err(
 		|ErrorWithCycles(cycles, e)| {
-			let named = cycles
-				.iter()
-				.map(|cycle| cycle.iter().map(|pkg| pkg.name().as_str()).collect::<Vec<_>>())
-				.collect::<Vec<_>>();
+			let named = Vec::from_iter(
+				cycles.iter().map(|cycle| cycle.iter().map(|pkg| pkg.name().as_str())),
+			);
 			e.context(format!("Cycles: {:?}", named))
 		},
 	)
@@ -45,7 +45,7 @@ struct ErrorWithCycles(Vec<DependencyCycle>, anyhow::Error);
 
 impl<T: Into<anyhow::Error>> From<T> for ErrorWithCycles {
 	fn from(src: T) -> Self {
-		ErrorWithCycles(vec![], src.into())
+		ErrorWithCycles(Vec::new(), src.into())
 	}
 }
 
@@ -69,7 +69,7 @@ where
 
 	let (members, to_ignore): (Vec<_>, Vec<_>) = members.iter().partition(|m| predicate(m));
 
-	let ignored = to_ignore.into_iter().map(|m| m.name()).collect::<HashSet<_>>();
+	let ignored = HashSet::<InternedString>::from_iter(to_ignore.into_iter().map(|m| m.name()));
 
 	ws.config()
 		.shell()
@@ -103,15 +103,13 @@ where
 	// drop the global package lock
 	drop(lock);
 
-	let map = members
-		.iter()
-		.filter_map(|&member| {
+	let map =
+		HashMap::<InternedString, NodeIndex>::from_iter(members.iter().filter_map(|&member| {
 			if ignored.contains(&member.name()) || already_published.contains(&member.name()) {
 				return None;
 			}
 			Some((member.name(), graph.add_node(member.clone())))
-		})
-		.collect::<HashMap<_, _>>();
+		}));
 
 	for member in members {
 		let current_index = match map.get(&member.name()) {
@@ -148,8 +146,8 @@ where
 
 	// cannot use `toposort` for graphs that are cyclic in a undirected sense
 	// but are not in a directed way
-	let mut cycles = vec![];
-	let mut toposorted_indices = vec![];
+	let mut cycles = Vec::new();
+	let mut toposorted_indices = Vec::new();
 	let strongly_connected_sets = petgraph::algo::kosaraju_scc(&graph);
 	for strongly_connected in strongly_connected_sets {
 		match strongly_connected.len() {
@@ -181,10 +179,9 @@ where
 
 	// the output of `kosaraju_scc` is in reverse topological order, leafs first, which matches
 
-	let packages = toposorted_indices
-		.into_iter()
-		.map(|i| graph.node_weight(i).unwrap().clone())
-		.collect::<Vec<_>>();
+	let packages = Vec::from_iter(
+		toposorted_indices.into_iter().map(|i| graph.node_weight(i).unwrap().clone()),
+	);
 
 	Ok(packages)
 }
@@ -195,7 +192,8 @@ fn graphviz<'i, I: IntoIterator<Item = &'i Vec<NodeIndex>>, W: Write>(
 	cycles: I,
 	dest: &mut W,
 ) -> anyhow::Result<()> {
-	let cycle_indices = cycles.into_iter().flat_map(|y| y.iter()).copied().collect::<HashSet<_>>();
+	let cycle_indices =
+		HashSet::<NodeIndex>::from_iter(cycles.into_iter().flat_map(|y| y.iter()).copied());
 	let config = &[dot::Config::EdgeNoLabel, dot::Config::NodeNoLabel][..];
 	let get_edge_attributes =
 		|_graph: &Graph<Package, (), Directed, u32>, edge_ref: EdgeReference<'_, ()>| -> String {
@@ -320,7 +318,7 @@ publish = false
 
 	impl WorkspaceBuilder {
 		pub fn add_crate(&mut self, name: &'static str) -> &mut Krate {
-			let krate = Krate { name, version: None, dependencies: vec![] };
+			let krate = Krate { name, version: None, dependencies: Vec::new() };
 			self.krates.push(krate);
 			self.krates.last_mut().unwrap()
 		}
@@ -355,7 +353,7 @@ publish = false
 					manifests.iter().map(|manifest| manifest.name().as_str().to_owned()).collect(),
 				),
 				&None,
-				&Some(vec![]),
+				&Some(Vec::new()),
 				&None,
 				&None,
 			);
@@ -372,13 +370,12 @@ publish = false
         {}
     ]
     "###,
-					Itertools::intersperse(
+					String::from_iter(Itertools::intersperse(
 						manifests
 							.iter()
 							.map(|manifest| format!(r#""./{}""#, manifest.name().as_str())),
 						", ".to_owned()
-					)
-					.collect::<String>()
+					))
 				);
 				std::fs::write(base.join("Cargo.toml"), content.as_bytes()).unwrap();
 				for manifest in manifests.iter() {
@@ -406,7 +403,7 @@ publish = false
 			}
 
 			let vmanifest = VirtualManifest::new(
-				vec![],
+				Vec::new(),
 				HashMap::default(),
 				vconfig,
 				None,

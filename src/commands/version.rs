@@ -100,19 +100,23 @@ where
 {
 	let c = ws.config();
 
-	let updates = edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
-		Ok(mapper(p).map(|nv_version| {
-			c.shell()
-				.status("Bumping", format!("{:}: {:} -> {:}", p.name(), p.version(), nv_version))
-				.expect("Writing to the shell would have failed before. qed");
-			doc["package"]["version"] =
-				Item::Value(Value::from(nv_version.to_string()).decorated(" ", ""));
-			(p.name().as_str().to_owned(), nv_version)
-		}))
-	})?
-	.into_iter()
-	.flatten()
-	.collect::<HashMap<_, _>>();
+	let updates = HashMap::<String, Version>::from_iter(
+		edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
+			Ok(mapper(p).map(|nv_version| {
+				c.shell()
+					.status(
+						"Bumping",
+						format!("{:}: {:} -> {:}", p.name(), p.version(), nv_version),
+					)
+					.expect("Writing to the shell would have failed before. qed");
+				doc["package"]["version"] =
+					Item::Value(Value::from(nv_version.to_string()).decorated(" ", ""));
+				(p.name().as_str().to_owned(), nv_version)
+			}))
+		})?
+		.into_iter()
+		.flatten(),
+	);
 
 	c.shell().status("Updating", "Dependency tree")?;
 	edit_each(members_deep(ws).iter(), |p, doc| {
@@ -125,10 +129,13 @@ where
 
 		if let Entry::Occupied(occupied) = root.entry("target") {
 			if let Item::Table(table) = occupied.get() {
-				let keys = table
-					.iter()
-					.filter_map(|(k, v)| if v.is_table() { Some(k.to_owned()) } else { None })
-					.collect::<Vec<_>>();
+				let keys = Vec::from_iter(table.iter().filter_map(|(k, v)| {
+					if v.is_table() {
+						Some(k.to_owned())
+					} else {
+						None
+					}
+				}));
 
 				for k in keys {
 					if let Some(Item::Table(root)) = root.get_mut(&k) {

@@ -98,7 +98,7 @@ fn run_check<'a>(
 		if pkg.manifest().unstable_features().require(Feature::public_dependency()).is_ok() {
 			// FIXME: Turn this on at some point in the future
 			//Some(vec!["-D exported_private_dependencies".to_string()])
-			Some(vec![])
+			Some(Vec::new())
 		} else {
 			None
 		};
@@ -138,12 +138,13 @@ fn run_check<'a>(
 }
 
 fn check_dependencies(package: &Package) -> Result<(), anyhow::Error> {
-	let git_deps = package
-		.dependencies()
-		.iter()
-		.filter(|d| d.source_id().is_git() && d.version_req() == &OptVersionReq::Any)
-		.map(|d| format!("{:}", d.package_name()))
-		.collect::<Vec<_>>();
+	let git_deps = Vec::from_iter(
+		package
+			.dependencies()
+			.iter()
+			.filter(|d| d.source_id().is_git() && d.version_req() == &OptVersionReq::Any)
+			.map(|d| format!("{:}", d.package_name())),
+	);
 	if !git_deps.is_empty() {
 		anyhow::bail!(
 			"{}: has dependencies defined as git without a version: {:}",
