@@ -1,4 +1,5 @@
 use anyhow::Context;
+
 use cargo::{
 	core::{package::Package, Verbosity, Workspace},
 	util::{config::Config as CargoConfig, interning::InternedString},
@@ -30,6 +31,23 @@ arg_enum! {
 		// Generate Readme & overwrite existing file.
 		Overwrite,
 	}
+}
+
+#[derive(Debug)]
+enum EmptyPackage {
+	// Finding an Empty Package is not a failure.
+	Ignore,
+	// Finding an Empty Package is a failure.
+	Fail,
+}
+
+fn empty_package_bool_to_action(
+	empty_package_is_failure: bool,
+) -> Result<EmptyPackage, anyhow::Error> {
+	if empty_package_is_failure {
+		return Ok(EmptyPackage::Fail);
+	}
+	Ok(EmptyPackage::Ignore)
 }
 
 #[derive(StructOpt, Debug)]
@@ -271,7 +289,7 @@ pub enum Command {
 		pkg_opts: PackageSelectOptions,
 		/// Consider no package matching the criteria an error
 		#[structopt(long)]
-		empty_is_failure: bool,
+		empty_package_is_failure: bool,
 
 		/// Write a graphviz dot of all crates to be release and their dependency relation
 		/// to the given path.
@@ -305,7 +323,7 @@ pub enum Command {
 		check_readme: bool,
 		/// Consider no package matching the criteria an error
 		#[structopt(long)]
-		empty_is_failure: bool,
+		empty_package_is_failure: bool,
 
 		/// Write a graphviz dot file to the given destination
 		#[structopt(long = "dot-graph")]
@@ -331,7 +349,7 @@ pub enum Command {
 		readme_mode: GenerateReadmeMode,
 		/// Consider no package matching the criteria an error
 		#[structopt(long)]
-		empty_is_failure: bool,
+		empty_package_is_failure: bool,
 	},
 	/// Unleash 'em dragons
 	///
@@ -374,7 +392,7 @@ pub enum Command {
 		check_readme: bool,
 		/// Consider no package matching the criteria an error
 		#[structopt(long)]
-		empty_is_failure: bool,
+		empty_package_is_failure: bool,
 
 		/// Write a graphviz dot file to the given destination
 		#[structopt(long = "dot-graph")]
@@ -478,13 +496,53 @@ fn make_pkg_predicate(
 	})
 }
 
-fn verify_readme_feature() -> Result<(), anyhow::Error> {
+fn verify_readme_feature() -> anyhow::Result<()> {
 	if cfg!(feature = "gen-readme") {
 		Ok(())
 	} else {
 		anyhow::bail!("Readme related functionalities not available. Please re-install with gen-readme feature.")
 	}
 }
+
+fn handle_empty_package_is_failures<T>(
+	packages: &Vec<T>,
+	empty_package_is_failure: bool,
+) -> anyhow::Result<()> {
+	if packages.is_empty() {
+		let empty_package_action = empty_package_bool_to_action(empty_package_is_failure);
+		match empty_package_action {
+			Ok(EmptyPackage::Ignore) => {
+				println!("No packages selected. All good. Exiting.");
+				return Ok(());
+			},
+			Ok(EmptyPackage::Fail) => {
+				anyhow::bail!("No packages matching criteria. Exiting");
+			},
+			Err(_) => {
+				anyhow::bail!("No other possible way to handle empty packages, exiting");
+			},
+		}
+	}
+	Ok(())
+}
+
+fn bump_major_version(v: &mut Version) {
+	v.major += 1;
+	v.minor = 0;
+	v.patch = 0;
+}
+
+fn bump_minor_version(v: &mut Version) {
+	v.minor += 1;
+	v.patch = 0;
+}
+
+fn bump_patch_version(v: &mut Version) {
+	// 0.0.x means each patch is breaking, see:
+	// https://doc.rust-lang.org/cargo/reference/semver.html#change-categories
+	v.patch += 1;
+}
+
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 	let _ = Logger::try_with_str(args.log.clone())?.start()?;
@@ -591,14 +649,11 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 								v.pre = Prerelease::new("1").expect("Static will work");
 							} else if let Ok(num) = v.pre.as_str().parse::<u32>() {
 								v.pre = Prerelease::new(&format!("{}", num + 1))
-									.expect("Knwon to work");
+									.expect("Known to work");
 							} else {
-								let mut items = v
-									.pre
-									.as_str()
-									.split('.')
-									.map(|s| s.to_string())
-									.collect::<Vec<_>>();
+								let mut items = Vec::from_iter(
+									v.pre.as_str().split('.').map(|s| s.to_string()),
+								);
 								if let Some(num) = items.last().and_then(|u| u.parse::<u32>().ok())
 								{
 									let _ = items.pop();
@@ -625,7 +680,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 						|p| {
 							let mut v = p.version().clone();
 							v.pre = Prerelease::EMPTY;
-							v.patch += 1;
+							bump_patch_version(&mut v);
 							Some(v)
 						},
 						force_update,
@@ -639,8 +694,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 						|p| {
 							let mut v = p.version().clone();
 							v.pre = Prerelease::EMPTY;
-							v.minor += 1;
-							v.patch = 0;
+							bump_minor_version(&mut v);
 							Some(v)
 						},
 						force_update,
@@ -654,9 +708,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 						|p| {
 							let mut v = p.version().clone();
 							v.pre = Prerelease::EMPTY;
-							v.major += 1;
-							v.minor = 0;
-							v.patch = 0;
+							bump_major_version(&mut v);
 							Some(v)
 						},
 						force_update,
@@ -671,17 +723,11 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 							let mut v = p.version().clone();
 							v.pre = Prerelease::EMPTY;
 							if v.major != 0 {
-								v.major += 1;
-								v.minor = 0;
-								v.patch = 0;
+								bump_major_version(&mut v);
 							} else if v.minor != 0 {
-								v.minor += 1;
-								v.patch = 0;
+								bump_minor_version(&mut v);
 							} else {
-								// 0.0.x means each patch is breaking, see:
-								// https://doc.rust-lang.org/cargo/reference/semver.html#change-categories
-
-								v.patch += 1;
+								bump_patch_version(&mut v);
 								// no helper, have to reset the metadata ourselves
 								v.build = BuildMetadata::EMPTY;
 							}
@@ -699,17 +745,11 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 						|p| {
 							let mut v = p.version().clone();
 							if v.major != 0 {
-								v.major += 1;
-								v.minor = 0;
-								v.patch = 0
+								bump_major_version(&mut v);
 							} else if v.minor != 0 {
-								v.minor += 1;
-								v.patch = 0;
+								bump_minor_version(&mut v);
 							} else {
-								// 0.0.x means each patch is breaking, see:
-								// https://doc.rust-lang.org/cargo/reference/semver.html#change-categories
-
-								v.patch += 1;
+								bump_patch_version(&mut v);
 								// no helper, have to reset the metadata ourselves
 								v.build = BuildMetadata::EMPTY;
 							}
@@ -770,25 +810,16 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			let _ = maybe_patch(ws, false, &predicate)?;
 			Ok(())
 		},
-		Command::ToRelease { include_dev, pkg_opts, empty_is_failure, dot_graph } => {
+		Command::ToRelease { include_dev, pkg_opts, empty_package_is_failure, dot_graph } => {
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
 			let ws = maybe_patch(ws, include_dev, &predicate)?;
 
 			let packages = commands::packages_to_release(&ws, predicate, dot_graph)?;
-			if packages.is_empty() {
-				if empty_is_failure {
-					anyhow::bail!("No Packages matching criteria. Exiting");
-				} else {
-					println!("No packages selected. All good. Exiting.");
-					return Ok(());
-				}
-			}
+			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
+
 			println!(
 				"{:}",
-				packages
-					.iter()
-					.map(|p| format!("{} ({})", p.name(), p.version()))
-					.collect::<Vec<String>>()
+				Vec::from_iter(packages.iter().map(|p| format!("{} ({})", p.name(), p.version())))
 					.join(", ")
 			);
 
@@ -799,7 +830,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			build,
 			pkg_opts,
 			check_readme,
-			empty_is_failure,
+			empty_package_is_failure,
 			dot_graph,
 		} => {
 			if check_readme {
@@ -810,31 +841,17 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			let ws = maybe_patch(ws, include_dev, &predicate)?;
 
 			let packages = commands::packages_to_release(&ws, predicate, dot_graph)?;
-			if packages.is_empty() {
-				if empty_is_failure {
-					anyhow::bail!("No Packages matching criteria. Exiting");
-				} else {
-					println!("No packages selected. All good. Exiting.");
-					return Ok(());
-				}
-			}
+			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
 			commands::check_packages(&packages, &ws, build, check_readme)
 		},
 		#[cfg(feature = "gen-readme")]
-		Command::GenReadme { pkg_opts, readme_mode, empty_is_failure } => {
+		Command::GenReadme { pkg_opts, readme_mode, empty_package_is_failure } => {
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
 			let ws = maybe_patch(ws, false, &predicate)?;
 
 			let packages = commands::packages_to_release(&ws, predicate, None)?;
-			if packages.is_empty() {
-				if empty_is_failure {
-					anyhow::bail!("No Packages matching criteria. Exiting");
-				} else {
-					println!("No packages selected. All good. Exiting.");
-					return Ok(());
-				}
-			}
+			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
 			commands::gen_all_readme(packages, &ws, readme_mode)
 		},
@@ -847,21 +864,14 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			build,
 			pkg_opts,
 			check_readme,
-			empty_is_failure,
+			empty_package_is_failure,
 			dot_graph,
 		} => {
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
 			let ws = maybe_patch(ws, include_dev, &predicate)?;
 
 			let packages = commands::packages_to_release(&ws, predicate, dot_graph)?;
-			if packages.is_empty() {
-				if empty_is_failure {
-					anyhow::bail!("No Packages matching criteria. Exiting");
-				} else {
-					println!("No packages selected. All good. Exiting.");
-					return Ok(());
-				}
-			}
+			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
 			if !no_check {
 				if check_readme {
@@ -873,10 +883,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 
 			ws.config().shell().status(
 				"Releasing",
-				&packages
-					.iter()
-					.map(|p| format!("{} ({})", p.name(), p.version()))
-					.collect::<Vec<String>>()
+				Vec::from_iter(packages.iter().map(|p| format!("{} ({})", p.name(), p.version())))
 					.join(", "),
 			)?;
 

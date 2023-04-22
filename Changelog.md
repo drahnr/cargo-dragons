@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog].
 
 ## 1.0.0-alpha.13 - 2021-10-11
 - Update to cargo 0.57 and semver 1.0 – support for `edition = "2021"`
-- Breaking (UX): Not finding any package with the selections given is not considered an error anymore, but means the process ends successfully. If you want the old behaviour back where no package matching the criteria gives you a non-zero exit code add the `--empty-is-failure` cli switch to the call.
+- Breaking (UX): Not finding any package with the selections given is not considered an error anymore, but means the process ends successfully. If you want the old behaviour back where no package matching the criteria gives you a non-zero exit code add the `--empty-package-is-failure` cli switch to the call.
 - New: [`version` subcommand `bump-to-dev`](https://github.com/paritytech/cargo-unleash/pull/47) bumps to the next breaking version and appends a `-dev` pre-release value
 - New: `--changed-since=GIT_REF`-package selection param allows you to specify only crates that have been touched between the current git head and the given `$GIT_REF` (e.g. your current branch and `master`) - very useful to check only crates changed in a PR. See `--help` for more information.
 - Fix: Use saved credentials from `cargo login`, fixes #35

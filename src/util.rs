@@ -34,12 +34,12 @@ pub fn changed_packages<'a>(
 		.diff_tree_to_tree(Some(&current_head), Some(&main), None)
 		.context("Diffing failed")?;
 
-	let files = diff
-		.deltas()
-		.filter_map(|d| d.new_file().path())
-		.filter_map(|d| if d.is_file() { d.parent() } else { Some(d) })
-		.map(|l| path.join(l))
-		.collect::<Vec<_>>();
+	let files = Vec::from_iter(
+		diff.deltas()
+			.filter_map(|d| d.new_file().path())
+			.filter_map(|d| if d.is_file() { d.parent() } else { Some(d) })
+			.map(|l| path.join(l)),
+	);
 
 	trace!("Files changed since: {:#?}", files);
 
@@ -78,6 +78,9 @@ pub fn members_deep(ws: &'_ Workspace) -> Vec<Package> {
 	total_list
 }
 
+fn get_type_of<T>(_: &T) -> String {
+	std::any::type_name::<T>().to_owned()
+}
 /// Run f on every package's manifest, write the doc. Fail on first error
 pub fn edit_each<'a, I, F, R>(iter: I, f: F) -> Result<Vec<R>, anyhow::Error>
 where
@@ -144,78 +147,68 @@ where
 	let mut removed = Vec::new();
 	for case in [DependencySection::Regular, DependencySection::Dev, DependencySection::Build] {
 		let k = case.key();
-		let keys = {
-			if let Some(Item::Table(t)) = &root.get(k) {
-				t.iter()
-					.filter_map(|(key, v)| {
-						if v.is_table() || v.is_inline_table() {
-							Some(key.to_owned())
-						} else {
-							None
-						}
-					})
-					.collect::<Vec<_>>()
-			} else {
-				continue;
-			}
-		};
-		let t = root.get_mut(k).expect("Exists. qed").as_table_mut().expect("Is table. qed");
+		if let Some(Item::Table(t)) = root.get_mut(k) {
+			let keys = Vec::from_iter(t.iter().filter_map(|(key, v)| {
+				if v.is_table() || v.is_inline_table() {
+					Some(key.to_owned())
+				} else {
+					None
+				}
+			}));
+			for key in keys {
+				let (name, action) = match t.get_mut(&key) {
+					Some(Item::Value(Value::InlineTable(info))) => {
+						let (name, alias) = info
+							.get("package")
+							.and_then(|name| {
+								Some((
+									name.as_str()
+										.expect("Package is always a valid UTF-8. qed")
+										.to_owned(),
+									Some(key.clone()),
+								))
+							})
+							.unwrap_or_else(|| (key.clone(), None));
+						(name.clone(), f(name, alias, DependencyEntry::Inline(info), case.clone()))
+					},
+					Some(Item::Table(info)) => {
+						let (name, alias) = info
+							.get("package")
+							.and_then(|name| {
+								Some((
+									name.as_str()
+										.expect("Package is always a valid UTF-8. qed")
+										.to_owned(),
+									Some(key.clone()),
+								))
+							})
+							.unwrap_or_else(|| (key.clone(), None));
+						(name.clone(), f(name, alias, DependencyEntry::Table(info), case.clone()))
+					},
+					None => continue,
+					info => {
+						warn!("Unsupported dependency format for {}. Format must be InlinedTable/Table, not {}", key, get_type_of(&info));
+						(key.clone(), DependencyAction::Untouched)
+					},
+				};
 
-		for key in keys {
-			let (name, action) = match t.get_mut(&key) {
-				Some(Item::Value(Value::InlineTable(info))) => {
-					let (name, alias) = {
-						if let Some(name) = info.get("package") {
-							// is there a rename
-							(
-								name.as_str()
-									.expect("Package is always a string, or cargo would have failed before. qed")
-									.to_owned(),
-								Some(key.clone()),
-							)
-						} else {
-							(key.clone(), None)
-						}
-					};
-					(name.clone(), f(name, alias, DependencyEntry::Inline(info), case.clone()))
-				},
-				Some(Item::Table(info)) => {
-					let (name, alias) = {
-						if let Some(name) = info.get("package") {
-							// is there a rename
-							(
-								name.as_str()
-									.expect("Package is always a string, or cargo would have failed before. qed")
-									.to_owned(),
-								Some(key.clone()),
-							)
-						} else {
-							(key.clone(), None)
-						}
-					};
-
-					(name.clone(), f(name, alias, DependencyEntry::Table(info), case.clone()))
-				},
-				None => continue,
-				_ => {
-					warn!("Unsupported dependency format");
-					(key, DependencyAction::Untouched)
-				},
-			};
-
-			if action == DependencyAction::Remove {
-				t.remove(&name);
-				removed.push(name);
-			}
-			if action != DependencyAction::Untouched {
-				counter += 1;
+				match action {
+					DependencyAction::Remove => {
+						t.remove(&name);
+						removed.push(name);
+					},
+					DependencyAction::Untouched => { /* nop */ },
+					_ => {
+						counter += 1;
+					},
+				}
 			}
 		}
 	}
 
 	if !removed.is_empty() {
 		if let Some(Item::Table(features)) = root.get_mut("features") {
-			let keys = features.iter().map(|(k, _v)| k.to_owned()).collect::<Vec<_>>();
+			let keys = Vec::from_iter(features.iter().map(|(k, _v)| k.to_owned()));
 			for feat in keys {
 				if let Some(Item::Value(Value::Array(deps))) = features.get_mut(&feat) {
 					let mut to_remove = Vec::new();

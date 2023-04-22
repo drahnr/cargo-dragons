@@ -88,7 +88,7 @@ FLAGS:
         --dry-run
             dry run
 
-        --empty-is-failure
+        --empty-package-is-failure
             Consider no package matching the criteria an error
 
     -h, --help
