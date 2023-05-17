@@ -18,8 +18,7 @@ fn set_pre() -> Result<(), Box<dyn std::error::Error>> {
 		.arg("set-pre")
 		.arg("dev")
 		.arg("--packages")
-		.arg("crateA")
-		.arg("crateB");
+		.arg("crateA,crateB");
 	cmd.assert().success();
 
 	let temp_path = temp.path().to_path_buf();
@@ -49,9 +48,7 @@ fn bump_to_dev() -> Result<(), Box<dyn std::error::Error>> {
 		.arg("version")
 		.arg("bump-to-dev")
 		.arg("--packages")
-		.arg("crateA")
-		.arg("crateB")
-		.arg("crateC");
+		.arg("crateA,crateB,crateC");
 	cmd.assert().success();
 
 	let temp_path = temp.path().to_path_buf();
