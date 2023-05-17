@@ -14,14 +14,14 @@ Use `cargo install --path .` to install.
 
 Try and have it report what it would do on your mono repo with
 
-```bash
+```sh
 
 cargo dragons unleash --dry-run
 ```
 
 There are more options available on the CLI, just run with `--help`:
 
-```bash
+```sh
 Release the crates of this massiv monorepo
 
 USAGE:
@@ -65,7 +65,7 @@ SUBCOMMANDS:
 
 The main command is `cargo dragons unleash`, here is its help. All subcommands have extensive `--help` for you.
 
-```bash
+```sh
 $ cargo-dragons unleash --help
 Unleash ’em dragons
 
@@ -146,27 +146,32 @@ OPTIONS:
 ## Common Usage Examples
 
 **Release all crates** not having the `-dev`-pre version set
-```bash
+
+```sh
 cargo-dragons unleash --ignore-pre-version dev
 ```
 
 **Check if a PR can be released** (checking only changes in the PR compared to `main`)
-```bash
+
+```sh
 cargo-dragons check --changed-since=main
 ```
 
 **Release all crates** not having `test` in the name
-```bash
+
+```sh
 cargo-dragons unleash --skip test
 ```
 
 **Set the pre-version to `-dev`**
-```bash
+
+```sh
 cargo-dragons version set-pre dev
 ```
 
 **Bump the pre-version**, so for e.g. from `alpha.1` to `alpha.2` or `beta.3` to `beta.4`:
-```bash
+
+```sh
 cargo-dragons version bump-pre
 ```
 
@@ -174,10 +179,10 @@ cargo-dragons version bump-pre
 
 _You are using the tooling and want to be mentioned here–[create an issue](https://github.com/gnunicorn/cargo-dragons/issues/new)_
 
- - [Parity Substrate](https://github.com/paritytech/substrate) automatic releasing via [Gitlab CI](https://github.com/paritytech/substrate/blob/master/.gitlab-ci.yml)
- - [Parity SS58-registry](https://github.com/paritytech/ss58-registry) automatic releasing via [Gitlab CI](https://github.com/paritytech/ss58-registry/blob/main/.gitlab-ci.yml)
- - [Juice](https://github.com/spearow/juice)
- - [fatality](https://github.com/drahnr/fatality)
+- [Parity Substrate](https://github.com/paritytech/substrate) automatic releasing via [Gitlab CI](https://github.com/paritytech/substrate/blob/master/.gitlab-ci.yml)
+- [Parity SS58-registry](https://github.com/paritytech/ss58-registry) automatic releasing via [Gitlab CI](https://github.com/paritytech/ss58-registry/blob/main/.gitlab-ci.yml)
+- [Juice](https://github.com/spearow/juice)
+- [fatality](https://github.com/drahnr/fatality)
 
 ## License & Credits
 
