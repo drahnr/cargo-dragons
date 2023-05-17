@@ -25,8 +25,13 @@ default = []
 gen-readme = ["cargo-readme", "lazy_static", "sha1"]
 
 [dependencies]
-structopt = "0.3.26"
-toml_edit = "0.19"
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+clap-verbosity-flag = "2"
+clap-cargo = "0.10"
+clap-cargo-extra = "0.2"
+
+toml_edit = "0.14"
 log = "0.4.17"
 flexi_logger = "0.23.0"
 petgraph = "0.6"

@@ -8,8 +8,8 @@ use log::{trace, warn};
 use std::{collections::HashSet, fs};
 use toml_edit::{Document, InlineTable, Item, Table, Value};
 
-pub fn changed_packages<'a>(
-	ws: &'a Workspace,
+pub fn changed_packages(
+	ws: &Workspace,
 	reference: &str,
 ) -> Result<HashSet<Package>, anyhow::Error> {
 	ws.config()
@@ -18,7 +18,7 @@ pub fn changed_packages<'a>(
 		.expect("Writing to Shell doesn't fail");
 
 	let path = ws.root();
-	let repo = Repository::open(&path).context("Workspace isn't a git repo")?;
+	let repo = Repository::open(path).context("Workspace isn't a git repo")?;
 	let current_head = repo
 		.head()
 		.and_then(|b| b.peel_to_commit())
@@ -160,13 +160,13 @@ where
 					Some(Item::Value(Value::InlineTable(info))) => {
 						let (name, alias) = info
 							.get("package")
-							.and_then(|name| {
-								Some((
+							.map(|name| {
+								(
 									name.as_str()
 										.expect("Package is always a valid UTF-8. qed")
 										.to_owned(),
 									Some(key.clone()),
-								))
+								)
 							})
 							.unwrap_or_else(|| (key.clone(), None));
 						(name.clone(), f(name, alias, DependencyEntry::Inline(info), case.clone()))
@@ -174,13 +174,13 @@ where
 					Some(Item::Table(info)) => {
 						let (name, alias) = info
 							.get("package")
-							.and_then(|name| {
-								Some((
+							.map(|name| {
+								(
 									name.as_str()
 										.expect("Package is always a valid UTF-8. qed")
 										.to_owned(),
 									Some(key.clone()),
-								))
+								)
 							})
 							.unwrap_or_else(|| (key.clone(), None));
 						(name.clone(), f(name, alias, DependencyEntry::Table(info), case.clone()))

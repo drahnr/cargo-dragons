@@ -20,10 +20,10 @@ where
 		Ok(edit_each_dep(root, |p_name, alias, _table, _| {
 			let name = alias.unwrap_or(p_name);
 			let found = Command::new("rg")
-				.args(&["--type", "rust"])
+				.args(["--type", "rust"])
 				.arg("-qw")
 				.arg(name.replace('-', "_"))
-				.arg(&source_path)
+				.arg(source_path)
 				.status()
 				.unwrap()
 				.success();

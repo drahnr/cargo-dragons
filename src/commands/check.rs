@@ -5,7 +5,7 @@ use crate::util::{edit_each_dep, DependencyAction, DependencyEntry};
 use anyhow::Context;
 use cargo::{
 	core::{
-		compiler::{BuildConfig, CompileMode, DefaultExecutor, Executor},
+		compiler::{BuildConfig, CompileMode},
 		package::Package,
 		resolver::features::CliFeatures,
 		Feature, SourceId, Workspace,
@@ -19,7 +19,6 @@ use log::error;
 use std::{
 	collections::HashMap,
 	fs::{read_to_string, write},
-	sync::Arc,
 };
 use tar::Archive;
 use toml_edit::{Document, Item, Value};
@@ -60,12 +59,12 @@ fn run_check<'a>(
 	opts: &PackageOpts<'_>,
 	build_mode: CompileMode,
 	replace: &HashMap<String, String>,
-) -> Result<Workspace<'a>, anyhow::Error> {
+) -> anyhow::Result<Workspace<'a>> {
 	let config = ws.config();
 	let pkg = ws.current()?;
 
 	let f = GzDecoder::new(tar.file());
-	let dst = tar.parent().join(&format!("{}-{}", pkg.name(), pkg.version()));
+	let dst = tar.parent().join(format!("{}-{}", pkg.name(), pkg.version()));
 	if dst.exists() {
 		std::fs::remove_dir_all(&dst)?;
 	}
@@ -103,8 +102,7 @@ fn run_check<'a>(
 			None
 		};
 
-	let exec: Arc<dyn Executor> = Arc::new(DefaultExecutor);
-	ops::compile_with_exec(
+	ops::compile(
 		&ws,
 		&ops::CompileOptions {
 			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
@@ -117,7 +115,6 @@ fn run_check<'a>(
 			honor_rust_version: false,
 			target_rustc_crate_types: None,
 		},
-		&exec,
 	)?;
 
 	// Check that `build.rs` didn't modify any files in the `src` directory.
@@ -193,13 +190,13 @@ fn check_readme<'a>(ws: &Workspace<'a>, pkg: &Package) -> Result<(), anyhow::Err
 }
 
 #[cfg(not(feature = "gen-readme"))]
-fn check_readme<'a>(_ws: &Workspace<'a>, _pkg: &Package) -> Result<(), anyhow::Error> {
+fn check_readme(_ws: &Workspace<'_>, _pkg: &Package) -> Result<(), anyhow::Error> {
 	unreachable!()
 }
 
-pub fn check_packages<'a>(
+pub fn check_packages(
 	packages: &[Package],
-	ws: &Workspace<'a>,
+	ws: &Workspace<'_>,
 	build: bool,
 	check_readme: bool,
 ) -> Result<(), anyhow::Error> {
@@ -260,7 +257,7 @@ pub fn check_packages<'a>(
 		check_metadata(pkg)?;
 
 		let pkg_ws = Workspace::ephemeral(pkg.clone(), c, Some(ws.target_dir()), true)?;
-		c.shell().status("Packing", &pkg)?;
+		c.shell().status("Packing", pkg)?;
 		match package(&pkg_ws, &opts) {
 			Ok(Some(mut rw_lock)) if rw_lock.len() == 1 => {
 				Ok((pkg_ws, rw_lock.pop().expect("we checked the counter")))

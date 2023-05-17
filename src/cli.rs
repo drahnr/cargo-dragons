@@ -2,17 +2,13 @@ use anyhow::Context;
 
 use cargo::{
 	core::{package::Package, Verbosity, Workspace},
-	util::{auth::Secret, config::Config as CargoConfig, interning::InternedString},
+	util::{auth::Secret, config::Config as CargoConfig},
 };
-use flexi_logger::Logger;
+use flexi_logger::{LogSpecification, Logger};
 use log::trace;
 use regex::Regex;
 use semver::{BuildMetadata, Prerelease, Version};
 use std::{fs, path::PathBuf, str::FromStr};
-use structopt::{
-	clap::{arg_enum, AppSettings::*},
-	StructOpt,
-};
 use toml_edit::Value;
 
 use crate::{commands, util};
@@ -21,19 +17,17 @@ fn parse_regex(src: &str) -> Result<Regex, anyhow::Error> {
 	Regex::new(src).context("Parsing Regex failed")
 }
 
-arg_enum! {
-	#[derive(Debug, PartialEq, Eq)]
-	pub enum GenerateReadmeMode {
-		// Generate Readme only if it is missing.
-		IfMissing,
-		// Generate Readme & append to existing file.
-		Append,
-		// Generate Readme & overwrite existing file.
-		Overwrite,
-	}
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerateReadmeMode {
+	// Generate Readme only if it is missing.
+	IfMissing,
+	// Generate Readme & append to existing file.
+	Append,
+	// Generate Readme & overwrite existing file.
+	Overwrite,
 }
 
-#[derive(Debug)]
+#[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum EmptyPackage {
 	// Finding an Empty Package is not a failure.
 	Ignore,
@@ -50,176 +44,183 @@ fn empty_package_bool_to_action(
 	Ok(EmptyPackage::Ignore)
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(setting(ColorAuto), setting(ColoredHelp))]
+#[derive(clap::Parser, Debug)]
 pub struct PackageSelectOptions {
 	/// Only use the specfic set of packages
 	///
 	/// Apply only to the packages named as defined. This is mutually exclusive with skip and
 	/// ignore-version-pre.
-	#[structopt(short, long, parse(from_str))]
-	pub packages: Vec<InternedString>,
+	#[clap(short, long, value_parser = parse_regex)]
+	pub packages: Vec<Regex>,
+
 	/// Skip the package names matching ...
 	///
 	/// Provide one or many regular expression that, if the package name matches, means we skip
 	/// that package. Mutually exclusive with `--package`
-	#[structopt(short, long, parse(try_from_str = parse_regex))]
+	#[clap(short, long, value_parser = parse_regex)]
 	pub skip: Vec<Regex>,
+
 	/// Ignore version pre-releases
 	///
 	/// Skip if the SemVer pre-release field is any of the listed. Mutually exclusive with
 	/// `--package`
-	#[structopt(short, long)]
+	#[clap(short, long)]
 	pub ignore_pre_version: Vec<String>,
+
 	/// Ignore whether `publish` is set.
 	///
 	/// If nothing else is specified, `publish = true` is assumed for every package. If publish
 	/// is set to false or any registry, it is ignored by default. If you want to include it
 	/// regardless, set this flag.
-	#[structopt(long)]
+	#[clap(long)]
 	ignore_publish: bool,
+
 	/// Automatically detect the packages, which changed compared to the given git commit.
 	///
 	/// Compares the current git `head` to the reference given, identifies which files changed
 	/// and attempts to identify the packages and its dependents through that mechanism. You
 	/// can use any `tag`, `branch` or `commit`, but you must be sure it is available
 	/// (and up to date) locally.
-	#[structopt(short = "c", long = "changed-since")]
+	#[clap(short = 'c', long = "changed-since")]
 	pub changed_since: Option<String>,
+
 	/// Even if not selected by default, also include depedencies with a pre (cascading)
-	#[structopt(long)]
+	#[clap(long)]
 	pub include_pre_deps: bool,
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(setting(ColorAuto), setting(ColoredHelp))]
+#[derive(clap::Subcommand, Debug)]
 pub enum VersionCommand {
 	/// Pick pre-releases and put them to release mode.
 	Release {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Smart bumping of crates for the next breaking release, bumps minor for 0.x and major for
 	/// major > 1
 	BumpBreaking {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Smart bumping of crates for the next breaking release and add a `-dev`-pre-release-tag
 	BumpToDev {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 		/// Use this identifier instead of `dev`  for the pre-release
-		#[structopt()]
+		#[arg(long)]
 		pre_tag: Option<String>,
 	},
 	/// Increase the pre-release suffix, keep prefix, set to `.1` if no suffix is present
 	BumpPre {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Increase the patch version, unset prerelease
 	BumpPatch {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Increase the minor version, unset prerelease and patch
 	BumpMinor {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Increase the major version, unset prerelease, minor and patch
 	BumpMajor {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Hard set version to given string
 	Set {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Set to a specific Version
 		version: Version,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Set the pre-release to string
 	SetPre {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// The string to set the pre-release to
-		#[structopt()]
+		#[arg()]
 		pre: String,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 	/// Set the metadata to string
 	SetBuild {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// The specific metadata to set to
-		#[structopt()]
+		#[arg()]
 		meta: String,
 		/// Force an update of dependencies
 		///
 		/// Hard set to the new version, do not check whether the given one still matches
-		#[structopt(long)]
+		#[arg(long)]
 		force_update: bool,
 	},
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(setting(ColorAuto), setting(ColoredHelp))]
+#[derive(clap::Subcommand, Debug)]
 pub enum Command {
+	/// Generate the clap completions
+	Completions {
+		#[arg(short, long, default_value = "zsh")]
+		shell: clap_complete::Shell,
+	},
 	/// Set a field in all manifests
 	///
 	/// Go through all matching crates and set the field name to value.
 	/// Add the field if it doesn't exists yet.
 	Set {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// The root key table to look the key up in
-		#[structopt(short, long, default_value = "package")]
+		#[arg(short, long, default_value = "package")]
 		root_key: String,
 		/// Name of the field
 		name: String,
@@ -241,12 +242,12 @@ pub enum Command {
 	/// Change versions as requested, then update all package's dependencies
 	/// to ensure they are still matching
 	Version {
-		#[structopt(subcommand)]
+		#[command(subcommand)]
 		cmd: VersionCommand,
 	},
 	/// Add owners for a lot of crates
 	AddOwner {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Owner to add to the packages
 		owner: String,
@@ -254,7 +255,7 @@ pub enum Command {
 		///
 		/// If this is nor the environment variable are set, this falls
 		/// back to the default value provided in the user directory
-		#[structopt(long, env = "CRATES_TOKEN", hide_env_values = true)]
+		#[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
 		token: Option<String>,
 	},
 	/// Deactivate the `[dev-dependencies]`
@@ -262,17 +263,17 @@ pub enum Command {
 	/// Go through the workspace and remove the `[dev-dependencies]`-section from the package
 	/// manifest for all packages matching.
 	DeDevDeps {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 	},
 	/// Check the package(s) for unused dependencies
 	CleanDeps {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Do only check if you'd clean up.
 		///
 		/// Abort if you found unused dependencies
-		#[structopt(long = "check")]
+		#[arg(long = "check")]
 		check_only: bool,
 	},
 	/// Calculate the packages and the order in which to release
@@ -283,17 +284,17 @@ pub enum Command {
 		/// Do not disable dev-dependencies
 		///
 		/// By default we disable dev-dependencies before the run.
-		#[structopt(long = "include-dev-deps")]
+		#[arg(long = "include-dev-deps")]
 		include_dev: bool,
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Consider no package matching the criteria an error
-		#[structopt(long)]
+		#[arg(long)]
 		empty_package_is_failure: bool,
 
 		/// Write a graphviz dot of all crates to be release and their dependency relation
 		/// to the given path.
-		#[structopt(long = "dot-graph")]
+		#[arg(long = "dot-graph")]
 		dot_graph: Option<PathBuf>,
 	},
 	/// Check whether crates can be packaged
@@ -304,29 +305,29 @@ pub enum Command {
 		/// Do not disable dev-dependencies
 		///
 		/// By default we disable dev-dependencies before the run.
-		#[structopt(long = "include-dev-deps")]
+		#[arg(long = "include-dev-deps")]
 		include_dev: bool,
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Actually build the package
 		///
 		/// By default, this only runs `cargo check` against the package
 		/// build. Set this flag to have it run an actual `build` instead.
-		#[structopt(long)]
+		#[arg(long)]
 		build: bool,
 		/// Generate & verify whether the Readme file has changed.
 		///
 		/// When enabled, this will generate a Readme file from
 		/// the crate's doc comments (using cargo-readme), and
 		/// check whether the existing Readme (if any) matches.
-		#[structopt(long)]
+		#[arg(long)]
 		check_readme: bool,
 		/// Consider no package matching the criteria an error
-		#[structopt(long)]
+		#[arg(long)]
 		empty_package_is_failure: bool,
 
 		/// Write a graphviz dot file to the given destination
-		#[structopt(long = "dot-graph")]
+		#[arg(long = "dot-graph")]
 		dot_graph: Option<PathBuf>,
 	},
 	/// Generate Readme files
@@ -335,20 +336,20 @@ pub enum Command {
 	/// on the crates' doc comments.
 	#[cfg(feature = "gen-readme")]
 	GenReadme {
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Generate readme file for package.
 		///
 		/// Depending on the chosen option, this will generate a Readme
 		/// file from the crate's doc comments (using cargo-readme).
-		#[structopt(long)]
-		#[structopt(
+		#[arg(long)]
+		#[arg(
             possible_values = &GenerateReadmeMode::variants(),
             case_insensitive = true
         )]
 		readme_mode: GenerateReadmeMode,
 		/// Consider no package matching the criteria an error
-		#[structopt(long)]
+		#[arg(long)]
 		empty_package_is_failure: bool,
 	},
 	/// Unleash 'em dragons
@@ -358,66 +359,70 @@ pub enum Command {
 		/// Do not disable dev-dependencies
 		///
 		/// By default we disable dev-dependencies before the run.
-		#[structopt(long = "include-dev-deps")]
+		#[arg(long = "include-dev-deps")]
 		include_dev: bool,
-		#[structopt(flatten)]
+		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 		/// Actually build the package in check
 		///
 		/// By default, this only runs `cargo check` against the package
 		/// build. Set this flag to have it run an actual `build` instead.
-		#[structopt(long)]
+		#[arg(long)]
 		build: bool,
 		/// dry run
-		#[structopt(long)]
+		#[arg(long)]
 		dry_run: bool,
 		/// dry run
-		#[structopt(long)]
+		#[arg(long)]
 		no_check: bool,
 		/// Ensure we have the owner set as well
-		#[structopt(long = "owner")]
+		#[arg(long = "owner")]
 		add_owner: Option<String>,
 		/// the crates.io token to use for uploading
 		///
 		/// If this is nor the environment variable are set, this falls
 		/// back to the default value provided in the user directory
-		#[structopt(long, env = "CRATES_TOKEN", hide_env_values = true)]
+		#[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
 		token: Option<String>,
 		/// Generate & verify whether the Readme file has changed.
 		///
 		/// When enabled, this will generate a Readme file from
 		/// the crate's doc comments (using cargo-readme), and
 		/// check whether the existing Readme (if any) matches.
-		#[structopt(long)]
+		#[arg(long)]
 		check_readme: bool,
 		/// Consider no package matching the criteria an error
-		#[structopt(long)]
+		#[arg(long)]
 		empty_package_is_failure: bool,
 
 		/// Write a graphviz dot file to the given destination
-		#[structopt(long = "dot-graph")]
+		#[arg(long = "dot-graph")]
 		dot_graph: Option<PathBuf>,
 	},
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "cargo-dragons", about = "Release the crates of this massiv monorepo")]
-#[structopt(setting(ColorAuto), setting(ColoredHelp))]
-pub struct Opt {
+#[derive(Debug, clap::Parser)]
+#[command(version, about = "Release the crates of this massiv monorepo")]
+pub struct Args {
 	/// The path to workspace manifest
 	///
 	/// Can either be the folder if the file is named `Cargo.toml` or the path
 	/// to the specific `.toml`-manifest to load as the cargo workspace.
-	#[structopt(short, long, parse(from_os_str), default_value = "./")]
+	#[arg(short, long, value_parser=PathBuf::from_str, default_value = ".", value_hint = clap::ValueHint::AnyPath)]
+	#[clap(short, long, global(true))]
 	pub manifest_path: PathBuf,
-	/// Specify the log levels.
-	#[structopt(short, long, default_value = "warn")]
-	pub log: String,
-	/// Show verbose cargo output
-	#[structopt(short, long)]
-	pub verbose: bool,
 
-	#[structopt(subcommand)]
+	// TODO consider using these  instead of custom parsin
+	// #[command(flatten)]
+	// manifest: clap_cargo::Manifest,
+	// #[command(flatten)]
+	// workspace: clap_cargo::Workspace,
+	// #[command(flatten)]
+	// features: clap_cargo::Features,
+	#[command(flatten)]
+	pub verbosity: clap_verbosity_flag::Verbosity,
+
+	#[command(subcommand)]
 	pub cmd: Command,
 }
 
@@ -477,7 +482,11 @@ fn make_pkg_predicate(
 
 		if !packages.is_empty() {
 			trace!("going for matching against {:?}", packages);
-			return packages.contains(&p.name()) || check_version(p);
+			let name = p.name();
+			if packages.iter().any(|r| r.is_match(&name)) {
+				return true;
+			}
+			return check_version(p);
 		}
 
 		if !skip.is_empty() || !ignore_pre_version.is_empty() {
@@ -544,8 +553,9 @@ fn bump_patch_version(v: &mut Version) {
 }
 
 //TODO: Refactor this implementation to be a bit more readable.
-pub fn run(args: Opt) -> Result<(), anyhow::Error> {
-	let _ = Logger::try_with_str(args.log.clone())?.start()?;
+pub fn run(args: Args) -> Result<(), anyhow::Error> {
+	let spec = LogSpecification::builder().default(args.verbosity.log_level_filter()).build();
+	let _ = Logger::with(spec).start()?;
 	let c = CargoConfig::default().expect("Couldn't create cargo config");
 	c.values()?;
 	c.load_credentials()?;
@@ -560,7 +570,11 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 	};
 
 	c.shell()
-		.set_verbosity(if args.verbose { Verbosity::Verbose } else { Verbosity::Normal });
+		.set_verbosity(match args.verbosity.log_level().unwrap_or(log::Level::Warn) {
+			log::Level::Trace | log::Level::Debug => Verbosity::Verbose,
+			log::Level::Info | log::Level::Warn => Verbosity::Normal,
+			log::Level::Error => Verbosity::Quiet,
+		});
 
 	let root_manifest = {
 		let mut path = args.manifest_path.clone();
@@ -590,6 +604,13 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 		};
 	//TODO: Seperate matching from Command implementations to make this a more readable codebase
 	match args.cmd {
+		Command::Completions { shell } => {
+			let sink = &mut std::io::stdout();
+			let mut app = <Args as clap::CommandFactory>::command();
+			let app = &mut app;
+			clap_complete::generate(shell, app, app.get_name().to_string(), sink);
+			Ok(())
+		},
 		Command::CleanDeps { pkg_opts, check_only } => {
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
 			commands::clean_up_unused_dependencies(&ws, predicate, check_only)
@@ -609,7 +630,7 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			}
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
 			let type_value =
-				if let Ok(v) = bool::from_str(&value).or_else(|_| Err(i64::from_str(&value))) {
+				if let Ok(v) = bool::from_str(&value).map_err(|_| i64::from_str(&value)) {
 					Value::from(v)
 				} else {
 					Value::from(value)

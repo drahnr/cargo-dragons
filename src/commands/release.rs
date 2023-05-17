@@ -54,7 +54,7 @@ pub fn release(
 		}
 
 		let pkg_ws = Workspace::ephemeral(pkg.clone(), c, Some(ws.target_dir()), true)?;
-		c.shell().status("Publishing", &pkg)?;
+		c.shell().status("Publishing", pkg)?;
 		publish(&pkg_ws, &opts)?;
 		if let Some(ref o) = owner {
 			add_owner(c, pkg, o.clone(), token.clone())?;

@@ -1,9 +1,9 @@
-use structopt::StructOpt;
+use clap::Parser;
 mod cli;
 mod commands;
 mod util;
 
-use cli::Opt;
+use cli::Args;
 
 fn main() -> Result<(), anyhow::Error> {
 	let mut argv = Vec::new();
@@ -15,5 +15,6 @@ fn main() -> Result<(), anyhow::Error> {
 		}
 	}
 	argv.extend(args);
-	cli::run(Opt::from_iter(argv))
+	let args = Args::parse_from(argv);
+	cli::run(args)
 }
