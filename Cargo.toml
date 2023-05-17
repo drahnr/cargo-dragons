@@ -1,7 +1,10 @@
 [package]
 name = "cargo-dragons"
 version = "1.0.0-alpha.dev"
-authors = ["Benjamin Kampmann <ben@gnunicorn.org>", "Bernhard Schuster <bernhard@ahoi.io>"]
+authors = [
+  "Benjamin Kampmann <ben@gnunicorn.org>",
+  "Bernhard Schuster <bernhard@ahoi.io>",
+]
 edition = "2021"
 rust-version = "1.56.1"
 license = "GPL-3.0"
@@ -23,7 +26,7 @@ gen-readme = ["cargo-readme", "lazy_static", "sha1"]
 
 [dependencies]
 structopt = "0.3.26"
-toml_edit = "0.14"
+toml_edit = "0.19"
 log = "0.4.17"
 flexi_logger = "0.23.0"
 petgraph = "0.6"
@@ -31,9 +34,9 @@ regex = "1.4.1"
 anyhow = "1"
 
 # CARGO VERSION BOUND dependencies
-cargo = "0.64"
+cargo = "0.70"
 flate2 = "1.0.24"
-git2 = "0.14"
+git2 = "0.15"
 semver = "1.0.13"
 tar = "0.4.38"
 
@@ -45,6 +48,6 @@ sha1 = { version = "0.10", optional = true }
 [dev-dependencies]
 assert_cmd = "2.0"
 assert_fs = "1.0"
-predicates = "2"
-toml = "0.5"
+predicates = "3"
+toml = "0.7"
 itertools = "0.10"

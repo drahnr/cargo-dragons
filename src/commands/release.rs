@@ -2,15 +2,15 @@ use crate::commands::add_owner;
 use cargo::{
 	core::{package::Package, resolver::features::CliFeatures, Workspace},
 	ops::{self, publish, PublishOpts},
+	util::auth::Secret,
 };
-
 use std::{thread, time::Duration};
 
 pub fn release(
 	packages: Vec<Package>,
 	ws: Workspace<'_>,
 	dry_run: bool,
-	token: Option<String>,
+	token: Option<Secret<String>>,
 	owner: Option<String>,
 ) -> Result<(), anyhow::Error> {
 	let c = ws.config();

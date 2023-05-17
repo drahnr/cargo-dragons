@@ -113,7 +113,6 @@ fn run_check<'a>(
 			filter: ops::CompileFilter::Default { required_features_filterable: true },
 			target_rustdoc_args: None,
 			target_rustc_args: rustc_args,
-			local_rustdoc_args: None,
 			rustdoc_document_private_items: false,
 			honor_rust_version: false,
 			target_rustc_crate_types: None,

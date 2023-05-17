@@ -94,7 +94,7 @@ where
 			.expect("Parsing our dependency doesn't fail");
 
 		let _ = registry
-			.query(&dep, &mut |_| {
+			.query(&dep, cargo::core::QueryKind::Exact, &mut |_| {
 				already_published.insert(m.name());
 			})
 			.map(|e| e.expect("Quering the local registry doesn't fail"));
@@ -111,6 +111,7 @@ where
 			Some((member.name(), graph.add_node(member.clone())))
 		}));
 
+	let default_registry = SourceId::crates_io(ws.config())?;
 	for member in members {
 		let current_index = match map.get(&member.name()) {
 			Some(i) => i,
@@ -128,7 +129,7 @@ where
 				// us from doing so though.
 				trace!("Checking dependency for problems: {}", dep.package_name());
 				let source = dep.source_id();
-				if source.is_default_registry() {
+				if source == default_registry {
 					trace!("All good, it's on crates.io")
 				} else if source.is_path() && dep.is_locked() {
 					// this is a pretty big indicator that something is going to fail later...
@@ -246,7 +247,7 @@ mod tests {
 [package]
 name = "{name}"
 version = "{version}"
-edition = "2018"
+edition = "2021"
 description = "{name}"
 publish = false
 
@@ -279,6 +280,19 @@ publish = false
 		.unwrap();
 
 		manifest
+	}
+
+	#[test]
+	fn mock_make_manifest_works() {
+		let cfg = Config::default().unwrap();
+		let _ = dbg!(make_manifest(
+			&cfg,
+			PathBuf::from("/asdfjad").as_path(),
+			"dinodinodino",
+			Version::parse("1.2.3").unwrap(),
+			SourceId::crates_io(&cfg).unwrap(),
+			&[],
+		));
 	}
 
 	use cargo::core::VirtualManifest;

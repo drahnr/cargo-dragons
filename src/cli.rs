@@ -2,7 +2,7 @@ use anyhow::Context;
 
 use cargo::{
 	core::{package::Package, Verbosity, Workspace},
-	util::{config::Config as CargoConfig, interning::InternedString},
+	util::{auth::Secret, config::Config as CargoConfig, interning::InternedString},
 };
 use flexi_logger::Logger;
 use log::trace;
@@ -546,13 +546,15 @@ fn bump_patch_version(v: &mut Version) {
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 	let _ = Logger::try_with_str(args.log.clone())?.start()?;
-	let mut c = CargoConfig::default().expect("Couldn't create cargo config");
+	let c = CargoConfig::default().expect("Couldn't create cargo config");
 	c.values()?;
 	c.load_credentials()?;
 
-	let get_token = |t| -> Result<Option<String>, anyhow::Error> {
+	let get_token = |t| -> Result<Option<Secret<String>>, anyhow::Error> {
 		Ok(match t {
-			None => c.get_string("registry.token")?.map(|x| x.val),
+			None => c
+				.get_string("registry.token")?
+				.map(|token_json_val| Secret::from(token_json_val.val)),
 			_ => t,
 		})
 	};
@@ -593,11 +595,11 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 			commands::clean_up_unused_dependencies(&ws, predicate, check_only)
 		},
 		Command::AddOwner { owner, token, pkg_opts } => {
-			let t = get_token(token)?;
+			let token = get_token(token.map(Secret::from))?;
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
 
 			for pkg in ws.members().filter(|p| predicate(p)) {
-				commands::add_owner(ws.config(), pkg, owner.clone(), t.clone())?;
+				commands::add_owner(ws.config(), pkg, owner.clone(), token.clone())?;
 			}
 			Ok(())
 		},
@@ -887,7 +889,8 @@ pub fn run(args: Opt) -> Result<(), anyhow::Error> {
 					.join(", "),
 			)?;
 
-			commands::release(packages, ws, dry_run, get_token(token)?, add_owner)
+			let token = get_token(token.map(Secret::from))?;
+			commands::release(packages, ws, dry_run, token, add_owner)
 		},
 	}
 }

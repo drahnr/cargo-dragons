@@ -1,14 +1,14 @@
 use cargo::{
 	core::package::Package,
 	ops::{modify_owners, OwnersOptions},
-	util::config::Config,
+	util::{auth::Secret, config::Config},
 };
 
 pub fn add_owner(
 	c: &Config,
 	package: &Package,
 	new_owner: String,
-	token: Option<String>,
+	token: Option<Secret<String>>,
 ) -> Result<(), anyhow::Error> {
 	if let Err(e) = modify_owners(
 		c,
