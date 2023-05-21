@@ -3,6 +3,9 @@ mod cli;
 mod commands;
 mod util;
 
+#[cfg(test)]
+mod tests;
+
 use cli::Args;
 
 fn main() -> Result<(), anyhow::Error> {
