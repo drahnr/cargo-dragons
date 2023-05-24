@@ -53,8 +53,36 @@ fn inject_replacement(
 	Ok(())
 }
 
-fn run_check<'a>(
+pub(crate) fn run_check_inplace<'a>(
 	ws: &Workspace<'a>,
+	package: &Package,
+	opts: &PackageOpts<'_>,
+	build_mode: CompileMode,
+) -> anyhow::Result<Workspace<'a>> {
+	let config = ws.config();
+	let workspace = Workspace::new(ws.root_manifest(), ws.config())?;
+
+	ops::compile(
+		&workspace,
+		&ops::CompileOptions {
+			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
+			spec: ops::Packages::Packages(vec![package.name().to_string()]),
+			cli_features: opts.cli_features.clone(),
+			filter: ops::CompileFilter::Default { required_features_filterable: true },
+			target_rustdoc_args: None,
+			target_rustc_args: None,
+			rustdoc_document_private_items: false,
+			honor_rust_version: false,
+			target_rustc_crate_types: None,
+		},
+	)?;
+
+	Ok(workspace)
+}
+
+pub(crate) fn run_check_ephemeral<'a>(
+	ws: &Workspace<'a>,
+	package: &Package,
 	tar: &FileLock,
 	opts: &PackageOpts<'_>,
 	build_mode: CompileMode,
@@ -106,7 +134,7 @@ fn run_check<'a>(
 		&ws,
 		&ops::CompileOptions {
 			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
-			spec: ops::Packages::Packages(Vec::new()),
+			spec: ops::Packages::Packages(vec![package.name().to_string()]),
 			cli_features: opts.cli_features.clone(),
 			filter: ops::CompileFilter::Default { required_features_filterable: true },
 			target_rustdoc_args: None,
@@ -296,7 +324,14 @@ pub fn check_packages(
 	for (pkg_ws, rw_lock) in successes.iter().filter_map(|e| e.as_ref().ok()) {
 		c.shell()
 			.status("Verfying", pkg_ws.current().expect("We've build localised workspaces. qed"))?;
-		let ws = run_check(pkg_ws, rw_lock, &opts, build_mode, &replaces)?;
+		let ws = run_check_ephemeral(
+			pkg_ws,
+			pkg_ws.current().unwrap(),
+			rw_lock,
+			&opts,
+			build_mode,
+			&replaces,
+		)?;
 		let new_pkg = ws.current().expect("Each workspace is for a package!");
 		replaces.insert(
 			new_pkg.name().as_str().to_owned(),

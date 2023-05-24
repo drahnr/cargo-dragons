@@ -1,8 +1,7 @@
 use anyhow::Context;
-
 use cargo::{
-	core::{package::Package, Verbosity, Workspace},
-	util::{auth::Secret, config::Config as CargoConfig},
+	core::{package::Package, resolver::CliFeatures, Verbosity, Workspace},
+	util::{auth::Secret, command_prelude::CompileMode, config::Config as CargoConfig},
 };
 use flexi_logger::{LogSpecification, Logger};
 use log::trace;
@@ -11,10 +10,25 @@ use semver::{BuildMetadata, Prerelease, Version};
 use std::{fs, path::PathBuf, str::FromStr};
 use toml_edit::Value;
 
-use crate::{commands, util};
+use crate::{
+	commands,
+	util::{self, members_deep},
+};
 
 fn parse_regex(src: &str) -> Result<Regex, anyhow::Error> {
 	Regex::new(src).context("Parsing Regex failed")
+}
+
+fn parse_compile_mode_str(src: &str) -> anyhow::Result<CompileMode> {
+	Ok(match src {
+		"build" => CompileMode::Build,
+		"test" => CompileMode::Test,
+		"check" => CompileMode::Check { test: false },
+		_ => anyhow::bail!(
+			"Only `build`, `test`, `check` are known compilation modes, provided is unknown: {}",
+			src
+		),
+	})
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,8 +37,8 @@ pub enum GenerateReadmeMode {
 	IfMissing,
 	// Generate Readme & append to existing file.
 	Append,
-	// Generate Readme & overwrite existing file.
-	Overwrite,
+	// Generate Readme & overwrite/replace the existing file.
+	Replace,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
@@ -399,6 +413,89 @@ pub enum Command {
 		#[arg(long = "dot-graph")]
 		dot_graph: Option<PathBuf>,
 	},
+	/// Check whether packages can be build independently
+	///
+	/// Ensure all packages can be build not only as part of the workspace
+	/// with workspace joint dependency and feature resolution, but also with per package
+	/// compilation
+	IndependenceCheck {
+		/// Specifiy one of the three check modes:
+		///
+		/// "test" - Building the tests for the symbols, does not work after de-devdeps.
+		/// "build" - Building a target with rustc (lib or bin).
+		/// "check" - Building a target with rustc to emit rmeta metadata only.
+		#[arg(long, default_value="test", value_parser = parse_compile_mode_str)]
+		mode: Vec<CompileMode>,
+
+		/// Define the context in which check should be executed:
+		///
+		/// "ephemeral" - which would use a temporary package as a context.
+		///
+		/// "inplace" - which will perform the necessary compilations in the package directory.
+		#[arg(long="ctx", default_value_t = IndependenceCtx::default(), value_parser = IndependenceCtx::from_str)]
+		context: IndependenceCtx,
+
+		#[command(flatten)]
+		pkg_opts: PackageSelectOptions,
+
+		/// Do not attempt to compile all packages, but fail at the first one that doesn't pass the test.
+		#[arg(long)]
+		failfast: bool,
+	},
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndependenceCtx {
+	/// Compile 'in place', stay within the tree, but only compile the selected packages.
+	///
+	/// Commonly required when there are path-only or git based dependencies.
+	#[default]
+	InPlace,
+	/// Use a ephemeral workspace, outside of the current workspace.
+	Ephemeral,
+}
+
+impl ToString for IndependenceCtx {
+	fn to_string(&self) -> String {
+		match self {
+			Self::InPlace => String::from("inplace"),
+			Self::Ephemeral => String::from("ephemeral"),
+		}
+	}
+}
+
+impl FromStr for IndependenceCtx {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		Ok(match s {
+			"in-place" | "inplace" | "in_place" => Self::InPlace,
+			"ephemeral" => Self::Ephemeral,
+			c => anyhow::bail!("Unknown context: {}", c),
+		})
+	}
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+/// What to check for in independence
+pub enum IndependenceMode {
+	/// Run `cargo check`
+	Check,
+	/// Run `cargo build`
+	Build,
+	/// Run `cargo test`
+	Test,
+}
+
+impl FromStr for IndependenceMode {
+	type Err = anyhow::Error;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		Ok(match s {
+			"check" => Self::Check,
+			"build" => Self::Build,
+			"test" => Self::Test,
+			c => anyhow::bail!("Unknown check type: {}", c),
+		})
+	}
 }
 
 #[derive(Debug, clap::Parser)]
@@ -912,6 +1009,35 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 
 			let token = get_token(token.map(Secret::from))?;
 			commands::release(packages, ws, dry_run, token, add_owner)
+		},
+		Command::IndependenceCheck { mode: modes, context, pkg_opts, failfast } => {
+			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+
+			let packages = Vec::<Package>::from_iter(
+				members_deep(&ws).iter().filter(|p| predicate(p)).cloned(),
+			);
+
+			// FIXME: make build config configurable
+			//        https://github.com/paritytech/cargo-unleash/issues/20
+
+			let opts = cargo::ops::PackageOpts {
+				config: &c,
+				verify: false,
+				check_metadata: true,
+				list: false,
+				allow_dirty: true,
+				jobs: None,
+				to_package: cargo::ops::Packages::Default,
+				targets: Default::default(),
+				cli_features: CliFeatures {
+					features: Default::default(),
+					all_features: false,
+					uses_default_features: true,
+				},
+				keep_going: !failfast,
+			};
+
+			commands::independence_check(packages, &opts, ws, modes, context)
 		},
 	}
 }
