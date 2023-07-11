@@ -6,7 +6,7 @@ use cargo::{
 use flexi_logger::{LogSpecification, Logger};
 use log::trace;
 use regex::Regex;
-use semver::{BuildMetadata, Prerelease, Version};
+use semver::Version;
 use std::{fs, path::PathBuf, str::FromStr};
 use toml_edit::Value;
 
@@ -413,6 +413,12 @@ pub enum Command {
 		#[arg(long = "dot-graph")]
 		dot_graph: Option<PathBuf>,
 	},
+	/// Unify all dependencies to those used in the workspace
+	/// and suggest additional ones.
+	UnifyDeps {
+		#[command(flatten)]
+		pkg_opts: PackageSelectOptions,
+	},
 	/// Check whether packages can be build independently
 	///
 	/// Ensure all packages can be build not only as part of the workspace
@@ -523,7 +529,7 @@ pub struct Args {
 	pub cmd: Command,
 }
 
-fn make_pkg_predicate(
+pub(crate) fn make_pkg_predicate(
 	ws: &Workspace<'_>,
 	args: PackageSelectOptions,
 ) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
@@ -632,23 +638,6 @@ fn handle_empty_package_is_failures<T>(
 	Ok(())
 }
 
-fn bump_major_version(v: &mut Version) {
-	v.major += 1;
-	v.minor = 0;
-	v.patch = 0;
-}
-
-fn bump_minor_version(v: &mut Version) {
-	v.minor += 1;
-	v.patch = 0;
-}
-
-fn bump_patch_version(v: &mut Version) {
-	// 0.0.x means each patch is breaking, see:
-	// https://doc.rust-lang.org/cargo/reference/semver.html#change-categories
-	v.patch += 1;
-}
-
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Args) -> Result<(), anyhow::Error> {
 	let spec = LogSpecification::builder().default(args.verbosity.log_level_filter()).build();
@@ -681,7 +670,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 		fs::canonicalize(path)?
 	};
 
-	let ws = Workspace::new(&root_manifest, &c).context("Reading workspace failed")?;
+	let mut ws = Workspace::new(&root_manifest, &c).context("Reading workspace failed")?;
 
 	let maybe_patch =
 		|ws, shouldnt_patch, predicate: &dyn Fn(&Package) -> bool| -> anyhow::Result<Workspace> {
@@ -741,6 +730,11 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 				type_value,
 			)
 		},
+		Command::UnifyDeps { pkg_opts } => {
+			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			commands::unify_dependencies(&mut ws, predicate)?;
+			Ok(())
+		},
 		Command::Rename { old_name, new_name } => {
 			let predicate = |p: &Package| p.name().to_string().trim() == old_name;
 			let renamer = |_p: &Package| Some(new_name.clone());
@@ -748,182 +742,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			commands::rename(&ws, predicate, renamer)
 		},
 		Command::Version { cmd } => {
-			match cmd {
-				VersionCommand::Set { pkg_opts, force_update, version } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|_| Some(version.clone()),
-						force_update,
-					)
-				},
-				VersionCommand::BumpPre { pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							if v.pre.is_empty() {
-								v.pre = Prerelease::new("1").expect("Static will work");
-							} else if let Ok(num) = v.pre.as_str().parse::<u32>() {
-								v.pre = Prerelease::new(&format!("{}", num + 1))
-									.expect("Known to work");
-							} else {
-								let mut items = Vec::from_iter(
-									v.pre.as_str().split('.').map(|s| s.to_string()),
-								);
-								if let Some(num) = items.last().and_then(|u| u.parse::<u32>().ok())
-								{
-									let _ = items.pop();
-									items.push(format!("{}", num + 1));
-								} else {
-									items.push("1".to_owned());
-								}
-								if let Ok(pre) = Prerelease::new(&items.join(".")) {
-									v.pre = pre;
-								} else {
-									return None;
-								}
-							}
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::BumpPatch { pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.pre = Prerelease::EMPTY;
-							bump_patch_version(&mut v);
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::BumpMinor { pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.pre = Prerelease::EMPTY;
-							bump_minor_version(&mut v);
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::BumpMajor { pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.pre = Prerelease::EMPTY;
-							bump_major_version(&mut v);
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::BumpBreaking { pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.pre = Prerelease::EMPTY;
-							if v.major != 0 {
-								bump_major_version(&mut v);
-							} else if v.minor != 0 {
-								bump_minor_version(&mut v);
-							} else {
-								bump_patch_version(&mut v);
-								// no helper, have to reset the metadata ourselves
-								v.build = BuildMetadata::EMPTY;
-							}
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::BumpToDev { pkg_opts, force_update, pre_tag } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					let pre_val = pre_tag.unwrap_or_else(|| "dev".to_owned());
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							if v.major != 0 {
-								bump_major_version(&mut v);
-							} else if v.minor != 0 {
-								bump_minor_version(&mut v);
-							} else {
-								bump_patch_version(&mut v);
-								// no helper, have to reset the metadata ourselves
-								v.build = BuildMetadata::EMPTY;
-							}
-							// force the pre
-							v.pre = Prerelease::new(&pre_val.clone())
-								.expect("Static or expected to work");
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::SetPre { pre, pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.pre =
-								Prerelease::new(&pre.clone()).expect("Static or expected to work");
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::SetBuild { meta, pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.build = BuildMetadata::new(&meta.clone())
-								.expect("The meta you provided couldn't be parsed");
-							Some(v)
-						},
-						force_update,
-					)
-				},
-				VersionCommand::Release { pkg_opts, force_update } => {
-					let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-					commands::set_version(
-						&ws,
-						|p| predicate(p),
-						|p| {
-							let mut v = p.version().clone();
-							v.pre = Prerelease::EMPTY;
-							v.build = BuildMetadata::EMPTY;
-							Some(v)
-						},
-						force_update,
-					)
-				},
-			}
+			commands::adjust_version(&ws, cmd)?;
+			Ok(())
 		},
 		Command::DeDevDeps { pkg_opts } => {
 			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
@@ -975,6 +795,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 
 			commands::gen_all_readme(packages, &ws, readme_mode)
 		},
+
 		Command::Unleash {
 			dry_run,
 			no_check,

@@ -7,6 +7,7 @@ mod release;
 mod rename;
 mod set_field;
 mod to_release;
+mod unifydeps;
 mod version;
 
 pub use add_owner::add_owner;
@@ -18,7 +19,8 @@ pub use release::release;
 pub use rename::rename;
 pub use set_field::set_field;
 pub use to_release::packages_to_release;
-pub use version::set_version;
+pub use unifydeps::unify_dependencies;
+pub use version::{adjust_version, set_version};
 
 #[cfg(feature = "gen-readme")]
 mod readme;
