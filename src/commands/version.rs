@@ -8,8 +8,7 @@ use crate::{
 use anyhow::Context;
 use cargo::core::{package::Package, Workspace};
 use log::trace;
-use semver::{BuildMetadata, Prerelease};
-use semver::{Version, VersionReq};
+use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use std::collections::HashMap;
 use toml_edit::{Entry, Item, Value};
 
@@ -186,13 +185,13 @@ fn bump_patch_version(v: &mut Version) {
 pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), anyhow::Error> {
 	match cmd {
 		VersionCommand::Set { pkg_opts, force_update, version } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-			set_version(&ws, |p| predicate(p), |_| Some(version.clone()), force_update)
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			set_version(ws, |p| predicate(p), |_| Some(version.clone()), force_update)
 		},
 		VersionCommand::BumpPre { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -221,9 +220,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpPatch { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -235,9 +234,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpMinor { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -249,9 +248,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpMajor { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -263,9 +262,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpBreaking { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -285,10 +284,10 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpToDev { pkg_opts, force_update, pre_tag } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			let pre_val = pre_tag.unwrap_or_else(|| "dev".to_owned());
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -309,9 +308,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::SetPre { pre, pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -322,9 +321,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::SetBuild { meta, pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();
@@ -336,9 +335,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::Release { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(ws, pkg_opts)?;
 			set_version(
-				&ws,
+				ws,
 				|p| predicate(p),
 				|p| {
 					let mut v = p.version().clone();

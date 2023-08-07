@@ -62,22 +62,22 @@ fn replace_version_by_workspace<T: TableLike + SortableTableKeysBy + std::fmt::D
 }
 
 /// Deactivate the Dev Dependencies Section of the given toml
-pub fn unify_dependencies<'a, P>(ws: &mut Workspace<'_>, predicate: P) -> Result<(), anyhow::Error>
+pub fn unify_dependencies<P>(ws: &mut Workspace<'_>, predicate: P) -> Result<(), anyhow::Error>
 where
 	P: Fn(&Package) -> bool,
 {
 	let c = ws.config();
 	let _manifest = ws.root_manifest();
 	let Some(ws_config) = ws.load_workspace_config()? else {
-        anyhow::bail!("Must be workspace");
-    };
+		anyhow::bail!("Must be workspace");
+	};
 	let inh = ws_config.inheritable();
 	let dependencies_to_unify = inh.dependencies()?;
 
 	edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
 		let per_table = |deps: &mut Item| {
 			if let Some(deps) = deps.as_table_mut() {
-				for (ref dep, _workspace_dep) in &dependencies_to_unify {
+				for dep in dependencies_to_unify.keys() {
 					match deps.entry(dep) {
 						toml_edit::Entry::Vacant(_) => {},
 						toml_edit::Entry::Occupied(mut occ) => {
@@ -85,13 +85,13 @@ where
 
 							if let Some(tab) = occ.as_table_mut() {
 								// [dependencies.foo]
-								replace_version_by_workspace(&c, p.name().as_str(), tab);
+								replace_version_by_workspace(c, p.name().as_str(), tab);
 							} else if let Some(value) = occ.as_value_mut() {
 								// foo = ..
 								match value {
 									Value::InlineTable(tab) => {
 										// foo = { version = "0.1" , feature ... }
-										replace_version_by_workspace(&c, p.name().as_str(), tab)
+										replace_version_by_workspace(c, p.name().as_str(), tab)
 									},
 									occ @ Value::String(_) => {
 										// foo = "0.1"

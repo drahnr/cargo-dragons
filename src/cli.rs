@@ -444,7 +444,8 @@ pub enum Command {
 		#[command(flatten)]
 		pkg_opts: PackageSelectOptions,
 
-		/// Do not attempt to compile all packages, but fail at the first one that doesn't pass the test.
+		/// Do not attempt to compile all packages, but fail at the first one that doesn't pass the
+		/// test.
 		#[arg(long)]
 		failfast: bool,
 	},
