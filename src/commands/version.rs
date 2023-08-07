@@ -1,8 +1,8 @@
 use crate::{
-	cli::{make_pkg_predicate, VersionCommand},
+	cli::VersionCommand,
 	util::{
-		edit_each, edit_each_dep, members_deep, DependencyAction, DependencyEntry,
-		DependencySection,
+		edit_each, edit_each_dep, make_pkg_predicate, members_deep, DependencyAction,
+		DependencyEntry, DependencySection,
 	},
 };
 use anyhow::Context;

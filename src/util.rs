@@ -8,6 +8,8 @@ use log::{trace, warn};
 use std::{collections::HashSet, fs};
 use toml_edit::{Document, InlineTable, Item, Table, Value};
 
+use crate::cli::PackageSelectOptions;
+
 pub fn changed_packages(
 	ws: &Workspace,
 	reference: &str,
@@ -233,4 +235,119 @@ where
 		}
 	}
 	counter
+}
+
+/// How empty packages are handled
+#[derive(clap::ValueEnum, Debug, Clone, Copy)]
+pub(crate) enum EmptyPackage {
+	// Finding an Empty Package is not a failure.
+	Ignore,
+	// Finding an Empty Package is a failure.
+	Fail,
+}
+
+/// Convert a `bool` value to an `EmptyPackage` type
+pub(crate) fn empty_package_bool_to_action(empty_package_is_failure: bool) -> EmptyPackage {
+	if empty_package_is_failure {
+		return EmptyPackage::Fail;
+	}
+	EmptyPackage::Ignore
+}
+
+pub(crate) fn handle_empty_package_is_failures<T>(
+	packages: &Vec<T>,
+	empty_package_is_failure: bool,
+) -> anyhow::Result<()> {
+	if packages.is_empty() {
+		let empty_package_action = empty_package_bool_to_action(empty_package_is_failure);
+		match empty_package_action {
+			EmptyPackage::Ignore => {
+				println!("No packages selected. All good. Exiting.");
+				return Ok(());
+			},
+			EmptyPackage::Fail => {
+				anyhow::bail!("No packages matching criteria. Exiting");
+			},
+		}
+	}
+	Ok(())
+}
+
+pub(crate) fn make_pkg_predicate(
+	ws: &Workspace<'_>,
+	args: PackageSelectOptions,
+) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
+	let PackageSelectOptions {
+		packages,
+		skip,
+		ignore_pre_version,
+		ignore_publish,
+		changed_since,
+		include_pre_deps,
+	} = args;
+
+	if !packages.is_empty() {
+		if !skip.is_empty() || !ignore_pre_version.is_empty() {
+			anyhow::bail!(
+                "-p/--packages is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
+            );
+		}
+		if changed_since.is_some() {
+			anyhow::bail!("-p/--packages is mutually exclusive to using -c/--changed-since");
+		}
+	}
+
+	let publish = move |p: &Package| {
+		// If publish is set to false or any registry, it is ignored by default
+		// unless overriden.
+		let value = ignore_publish || p.publish().is_none();
+
+		trace!("{:}.publish={}", p.name(), value);
+		value
+	};
+	let check_version = move |p: &Package| include_pre_deps && !p.version().pre.is_empty();
+
+	let changed = if let Some(changed_since) = &changed_since {
+		if !skip.is_empty() || !ignore_pre_version.is_empty() {
+			anyhow::bail!(
+                "-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
+            );
+		}
+		Some(crate::util::changed_packages(ws, changed_since)?)
+	} else {
+		None
+	};
+
+	Ok(move |p: &Package| {
+		if !publish(p) {
+			return false;
+		}
+
+		if let Some(changed) = &changed {
+			return changed.contains(p) || check_version(p);
+		}
+
+		if !packages.is_empty() {
+			trace!("going for matching against {:?}", packages);
+			let name = p.name();
+			if packages.iter().any(|r| r.is_match(&name)) {
+				return true;
+			}
+			return check_version(p);
+		}
+
+		if !skip.is_empty() || !ignore_pre_version.is_empty() {
+			let name = p.name();
+			if skip.iter().any(|r| r.is_match(&name)) {
+				return false;
+			}
+			if !p.version().pre.is_empty()
+				&& ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
+			{
+				return false;
+			}
+		}
+
+		true
+	})
 }

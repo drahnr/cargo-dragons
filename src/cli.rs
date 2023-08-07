@@ -3,16 +3,14 @@ use cargo::{
 	core::{package::Package, resolver::CliFeatures, Verbosity, Workspace},
 	util::{auth::Secret, command_prelude::CompileMode, config::Config as CargoConfig},
 };
-use flexi_logger::{LogSpecification, Logger};
-use log::trace;
 use regex::Regex;
 use semver::Version;
 use std::{fs, path::PathBuf, str::FromStr};
 use toml_edit::Value;
 
 use crate::{
-	commands,
-	util::{self, members_deep},
+	commands::{self, IndependenceCtx},
+	util::{handle_empty_package_is_failures, make_pkg_predicate, members_deep},
 };
 
 fn parse_regex(src: &str) -> Result<Regex, anyhow::Error> {
@@ -39,23 +37,6 @@ pub enum GenerateReadmeMode {
 	Append,
 	// Generate Readme & overwrite/replace the existing file.
 	Replace,
-}
-
-#[derive(clap::ValueEnum, Debug, Clone, Copy)]
-enum EmptyPackage {
-	// Finding an Empty Package is not a failure.
-	Ignore,
-	// Finding an Empty Package is a failure.
-	Fail,
-}
-
-fn empty_package_bool_to_action(
-	empty_package_is_failure: bool,
-) -> Result<EmptyPackage, anyhow::Error> {
-	if empty_package_is_failure {
-		return Ok(EmptyPackage::Fail);
-	}
-	Ok(EmptyPackage::Ignore)
 }
 
 #[derive(clap::Parser, Debug)]
@@ -87,7 +68,7 @@ pub struct PackageSelectOptions {
 	/// is set to false or any registry, it is ignored by default. If you want to include it
 	/// regardless, set this flag.
 	#[clap(long)]
-	ignore_publish: bool,
+	pub ignore_publish: bool,
 
 	/// Automatically detect the packages, which changed compared to the given git commit.
 	///
@@ -451,60 +432,6 @@ pub enum Command {
 	},
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndependenceCtx {
-	/// Compile 'in place', stay within the tree, but only compile the selected packages.
-	///
-	/// Commonly required when there are path-only or git based dependencies.
-	#[default]
-	InPlace,
-	/// Use a ephemeral workspace, outside of the current workspace.
-	Ephemeral,
-}
-
-impl ToString for IndependenceCtx {
-	fn to_string(&self) -> String {
-		match self {
-			Self::InPlace => String::from("inplace"),
-			Self::Ephemeral => String::from("ephemeral"),
-		}
-	}
-}
-
-impl FromStr for IndependenceCtx {
-	type Err = anyhow::Error;
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		Ok(match s {
-			"in-place" | "inplace" | "in_place" => Self::InPlace,
-			"ephemeral" => Self::Ephemeral,
-			c => anyhow::bail!("Unknown context: {}", c),
-		})
-	}
-}
-
-#[derive(clap::ValueEnum, Clone, Copy, Debug)]
-/// What to check for in independence
-pub enum IndependenceMode {
-	/// Run `cargo check`
-	Check,
-	/// Run `cargo build`
-	Build,
-	/// Run `cargo test`
-	Test,
-}
-
-impl FromStr for IndependenceMode {
-	type Err = anyhow::Error;
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		Ok(match s {
-			"check" => Self::Check,
-			"build" => Self::Build,
-			"test" => Self::Test,
-			c => anyhow::bail!("Unknown check type: {}", c),
-		})
-	}
-}
-
 #[derive(Debug, clap::Parser)]
 #[command(version, about = "Release the crates of this massiv monorepo")]
 pub struct Args {
@@ -530,85 +457,6 @@ pub struct Args {
 	pub cmd: Command,
 }
 
-pub(crate) fn make_pkg_predicate(
-	ws: &Workspace<'_>,
-	args: PackageSelectOptions,
-) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
-	let PackageSelectOptions {
-		packages,
-		skip,
-		ignore_pre_version,
-		ignore_publish,
-		changed_since,
-		include_pre_deps,
-	} = args;
-
-	if !packages.is_empty() {
-		if !skip.is_empty() || !ignore_pre_version.is_empty() {
-			anyhow::bail!(
-                "-p/--packages is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
-            );
-		}
-		if changed_since.is_some() {
-			anyhow::bail!("-p/--packages is mutually exclusive to using -c/--changed-since");
-		}
-	}
-
-	let publish = move |p: &Package| {
-		// If publish is set to false or any registry, it is ignored by default
-		// unless overriden.
-		let value = ignore_publish || p.publish().is_none();
-
-		trace!("{:}.publish={}", p.name(), value);
-		value
-	};
-	let check_version = move |p: &Package| include_pre_deps && !p.version().pre.is_empty();
-
-	let changed = if let Some(changed_since) = &changed_since {
-		if !skip.is_empty() || !ignore_pre_version.is_empty() {
-			anyhow::bail!(
-                "-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
-            );
-		}
-		Some(util::changed_packages(ws, changed_since)?)
-	} else {
-		None
-	};
-
-	Ok(move |p: &Package| {
-		if !publish(p) {
-			return false;
-		}
-
-		if let Some(changed) = &changed {
-			return changed.contains(p) || check_version(p);
-		}
-
-		if !packages.is_empty() {
-			trace!("going for matching against {:?}", packages);
-			let name = p.name();
-			if packages.iter().any(|r| r.is_match(&name)) {
-				return true;
-			}
-			return check_version(p);
-		}
-
-		if !skip.is_empty() || !ignore_pre_version.is_empty() {
-			let name = p.name();
-			if skip.iter().any(|r| r.is_match(&name)) {
-				return false;
-			}
-			if !p.version().pre.is_empty()
-				&& ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
-			{
-				return false;
-			}
-		}
-
-		true
-	})
-}
-
 fn verify_readme_feature() -> anyhow::Result<()> {
 	if cfg!(feature = "gen-readme") {
 		Ok(())
@@ -617,32 +465,10 @@ fn verify_readme_feature() -> anyhow::Result<()> {
 	}
 }
 
-fn handle_empty_package_is_failures<T>(
-	packages: &Vec<T>,
-	empty_package_is_failure: bool,
-) -> anyhow::Result<()> {
-	if packages.is_empty() {
-		let empty_package_action = empty_package_bool_to_action(empty_package_is_failure);
-		match empty_package_action {
-			Ok(EmptyPackage::Ignore) => {
-				println!("No packages selected. All good. Exiting.");
-				return Ok(());
-			},
-			Ok(EmptyPackage::Fail) => {
-				anyhow::bail!("No packages matching criteria. Exiting");
-			},
-			Err(_) => {
-				anyhow::bail!("No other possible way to handle empty packages, exiting");
-			},
-		}
-	}
-	Ok(())
-}
-
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Args) -> Result<(), anyhow::Error> {
-	let spec = LogSpecification::builder().default(args.verbosity.log_level_filter()).build();
-	let _ = Logger::with(spec).start()?;
+	pretty_env_logger::init();
+
 	let c = CargoConfig::default().expect("Couldn't create cargo config");
 	c.values()?;
 	c.load_credentials()?;
