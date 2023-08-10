@@ -6,6 +6,7 @@ use cargo::{
 	ops::PackageOpts,
 	util::command_prelude::CompileMode,
 };
+use itertools::Itertools;
 
 /// How the independence check will be performed
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,31 +81,56 @@ pub fn independence_check(
 ) -> Result<(), anyhow::Error> {
 	let replace = Default::default();
 
-	log::info!("Running independence check using {} context", context.to_string());
+	println!(
+		"Running independence check using {} context for {} packages",
+		context.to_string(),
+		packages.len()
+	);
 
 	for package in packages.iter() {
 		for compile_mode in modes.iter() {
-			log::info!(
-				"Checking independence for package {} with {} mode and {} context",
-				package,
-				compile_mode_to_string(compile_mode).unwrap(),
-				context.to_string()
+			// Get all unique feature combinations to ensure their compilation.
+			let feature_permutations = Vec::from_iter(
+				package
+					.summary()
+					.features()
+					.keys()
+					.powerset()
+					.map(|v| Vec::from_iter(v.iter().map(|v| v.to_string()))),
 			);
+			println!("Checking compilation of these target permutations: {feature_permutations:?}");
 
-			match context {
-				IndependenceCtx::Ephemeral => {
-					let tar_rw_lock = cargo::ops::package_one(&ws, package, opts)?
-						.expect("Not listing, hence result is always `Some(_)`. qed");
+			for features in feature_permutations.iter() {
+				println!(
+					"{}: Running {} independence for package {}, with features {:?}",
+					context.to_string(),
+					compile_mode_to_string(compile_mode).unwrap(),
+					package.name(),
+					features
+				);
+				match context {
+					IndependenceCtx::Ephemeral => {
+						let tar_rw_lock = cargo::ops::package_one(&ws, package, opts)?
+							.expect("Not listing, hence result is always `Some(_)`. qed");
 
-					run_check_ephemeral(&ws, package, &tar_rw_lock, opts, *compile_mode, &replace)?;
-				},
-				IndependenceCtx::InPlace => {
-					run_check_inplace(&ws, package, opts, *compile_mode)?;
-				},
-			};
+						run_check_ephemeral(
+							&ws,
+							package,
+							&tar_rw_lock,
+							opts,
+							*compile_mode,
+							&replace,
+							&features,
+						)?;
+					},
+					IndependenceCtx::InPlace => {
+						run_check_inplace(&ws, package, opts, *compile_mode, &features)?;
+					},
+				};
+			}
 		}
 	}
-	log::info!("Checking independence succeed for all {} packages", packages.len());
+	println!("Checking independence succeed for all {} packages", packages.len());
 
 	Ok(())
 }

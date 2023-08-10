@@ -485,7 +485,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 	c.shell()
 		.set_verbosity(match args.verbosity.log_level().unwrap_or(log::Level::Warn) {
 			log::Level::Trace | log::Level::Debug => Verbosity::Verbose,
-			log::Level::Info | log::Level::Warn => Verbosity::Normal,
+			log::Level::Info => Verbosity::Normal,
+			log::Level::Warn => Verbosity::Quiet,
 			log::Level::Error => Verbosity::Quiet,
 		});
 
@@ -664,9 +665,6 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			let packages = Vec::<Package>::from_iter(
 				members_deep(&ws).iter().filter(|p| predicate(p)).cloned(),
 			);
-
-			// FIXME: make build config configurable
-			//        https://github.com/paritytech/cargo-unleash/issues/20
 
 			let opts = cargo::ops::PackageOpts {
 				config: &c,

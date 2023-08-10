@@ -53,21 +53,37 @@ fn inject_replacement(
 	Ok(())
 }
 
+/// Checks the compilation of a single package for a given `build_mode`.
+///
+/// # Arguments:
+/// `ws`: The global workspace of the package.
+/// `package`: Information about the package to compile.
+/// `opts`: Options for the compilation
+/// `build_mode`: How to compile the package.
+/// `features`: The crate features which to enable. Aka `cargo t --features "feat0 feat1"`
+///
+/// # Returns:
+/// Ok, if the package has been successfully compiled.
+/// Err otherwise.
 pub(crate) fn run_check_inplace<'a>(
 	ws: &Workspace<'a>,
 	package: &Package,
 	opts: &PackageOpts<'_>,
 	build_mode: CompileMode,
+	features: &[String],
 ) -> anyhow::Result<Workspace<'a>> {
 	let config = ws.config();
 	let workspace = Workspace::new(ws.root_manifest(), ws.config())?;
+
+	// Explicitly add the version to avoid conflicts, which would lead to an error.
+	let explicit = format!("{}@{}", package.name(), package.version());
 
 	ops::compile(
 		&workspace,
 		&ops::CompileOptions {
 			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
-			spec: ops::Packages::Packages(vec![package.name().to_string()]),
-			cli_features: opts.cli_features.clone(),
+			spec: ops::Packages::Packages(vec![explicit]),
+			cli_features: CliFeatures::from_command_line(features, false, true)?,
 			filter: ops::CompileFilter::Default { required_features_filterable: true },
 			target_rustdoc_args: None,
 			target_rustc_args: None,
@@ -87,6 +103,7 @@ pub(crate) fn run_check_ephemeral<'a>(
 	opts: &PackageOpts<'_>,
 	build_mode: CompileMode,
 	replace: &HashMap<String, String>,
+	features: &[String],
 ) -> anyhow::Result<Workspace<'a>> {
 	let config = ws.config();
 	let pkg = ws.current()?;
@@ -135,7 +152,7 @@ pub(crate) fn run_check_ephemeral<'a>(
 		&ops::CompileOptions {
 			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
 			spec: ops::Packages::Packages(vec![package.name().to_string()]),
-			cli_features: opts.cli_features.clone(),
+			cli_features: CliFeatures::from_command_line(features, false, false)?,
 			filter: ops::CompileFilter::Default { required_features_filterable: true },
 			target_rustdoc_args: None,
 			target_rustc_args: rustc_args,
@@ -331,6 +348,7 @@ pub fn check_packages(
 			&opts,
 			build_mode,
 			&replaces,
+			&opts.targets,
 		)?;
 		let new_pkg = ws.current().expect("Each workspace is for a package!");
 		replaces.insert(
