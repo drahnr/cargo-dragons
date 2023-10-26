@@ -28,8 +28,6 @@ gen-readme = ["cargo-readme", "lazy_static", "sha1"]
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 clap-verbosity-flag = "2"
-clap-cargo = "0.11"
-clap-cargo-extra = "0.3"
 
 toml_edit = "0.19"
 log = "0.4.17"

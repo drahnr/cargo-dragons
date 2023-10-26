@@ -1,3 +1,7 @@
+//! This crate provide release automation tooling for large monorepos
+
+#![deny(unused_imports, missing_docs)]
+
 use clap::Parser;
 mod cli;
 mod commands;

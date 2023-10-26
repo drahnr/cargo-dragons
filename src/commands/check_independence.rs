@@ -120,11 +120,11 @@ pub fn independence_check(
 							opts,
 							*compile_mode,
 							&replace,
-							&features,
+							features,
 						)?;
 					},
 					IndependenceCtx::InPlace => {
-						run_check_inplace(&ws, package, opts, *compile_mode, &features)?;
+						run_check_inplace(&ws, package, opts, *compile_mode, features)?;
 					},
 				};
 			}
