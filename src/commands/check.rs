@@ -81,7 +81,13 @@ pub(crate) fn run_check_inplace<'a>(
 	ops::compile(
 		&workspace,
 		&ops::CompileOptions {
-			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
+			build_config: BuildConfig::new(
+				config,
+				opts.jobs.clone(),
+				false,
+				&opts.targets,
+				build_mode,
+			)?,
 			spec: ops::Packages::Packages(vec![explicit]),
 			cli_features: CliFeatures::from_command_line(features, false, true)?,
 			filter: ops::CompileFilter::Default { required_features_filterable: true },
@@ -150,7 +156,13 @@ pub(crate) fn run_check_ephemeral<'a>(
 	ops::compile(
 		&ws,
 		&ops::CompileOptions {
-			build_config: BuildConfig::new(config, opts.jobs, false, &opts.targets, build_mode)?,
+			build_config: BuildConfig::new(
+				config,
+				opts.jobs.clone(),
+				false,
+				&opts.targets,
+				build_mode,
+			)?,
 			spec: ops::Packages::Packages(vec![package.name().to_string()]),
 			cli_features: CliFeatures::from_command_line(features, false, false)?,
 			filter: ops::CompileFilter::Default { required_features_filterable: true },

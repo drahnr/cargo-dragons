@@ -1,8 +1,9 @@
 use anyhow::Context;
 use cargo::{
 	core::{package::Package, resolver::CliFeatures, Verbosity, Workspace},
-	util::{auth::Secret, command_prelude::CompileMode, config::Config as CargoConfig},
+	util::{command_prelude::CompileMode, config::Config as CargoConfig},
 };
+use cargo_credential::Secret;
 use regex::Regex;
 use semver::Version;
 use std::{fs, path::PathBuf, str::FromStr};

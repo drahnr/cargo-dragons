@@ -2,8 +2,9 @@ use crate::commands::add_owner;
 use cargo::{
 	core::{package::Package, resolver::features::CliFeatures, Workspace},
 	ops::{self, publish, PublishOpts},
-	util::auth::Secret,
 };
+use cargo_credential::Secret;
+
 use std::{thread, time::Duration};
 
 pub fn release(

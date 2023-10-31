@@ -273,6 +273,7 @@ publish = false
 		let toml_manifest: TomlManifest = toml::from_str(toml_manifest).unwrap();
 		let (manifest, _paths) = TomlManifest::to_real_manifest(
 			&std::rc::Rc::new(toml_manifest),
+			false,
 			source_id,
 			base,
 			config,

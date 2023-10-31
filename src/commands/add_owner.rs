@@ -1,8 +1,9 @@
 use cargo::{
 	core::package::Package,
 	ops::{modify_owners, OwnersOptions},
-	util::{auth::Secret, config::Config},
+	util::config::Config,
 };
+use cargo_credential::Secret;
 
 pub fn add_owner(
 	c: &Config,
