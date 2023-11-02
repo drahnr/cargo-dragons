@@ -666,7 +666,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			let opts = cargo::ops::PackageOpts {
 				config: &c,
 				verify: false,
-				check_metadata: true,
+				check_metadata: false,
 				list: false,
 				allow_dirty: true,
 				jobs: None,
