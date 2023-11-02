@@ -339,10 +339,6 @@ pub enum Command {
 		/// Depending on the chosen option, this will generate a Readme
 		/// file from the crate's doc comments (using cargo-readme).
 		#[arg(long)]
-		#[arg(
-            possible_values = &GenerateReadmeMode::variants(),
-            case_insensitive = true
-        )]
 		readme_mode: GenerateReadmeMode,
 		/// Consider no package matching the criteria an error
 		#[arg(long)]
@@ -452,7 +448,7 @@ pub struct Args {
 	// #[command(flatten)]
 	// features: clap_cargo::Features,
 	#[command(flatten)]
-	pub verbosity: clap_verbosity_flag::Verbosity,
+	pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
 
 	#[command(subcommand)]
 	pub cmd: Command,
@@ -484,10 +480,10 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 	};
 
 	c.shell()
-		.set_verbosity(match args.verbosity.log_level().unwrap_or(log::Level::Warn) {
+		.set_verbosity(match args.verbosity.log_level().unwrap_or(log::Level::Error) {
 			log::Level::Trace | log::Level::Debug => Verbosity::Verbose,
 			log::Level::Info => Verbosity::Normal,
-			log::Level::Warn => Verbosity::Quiet,
+			log::Level::Warn => Verbosity::Normal,
 			log::Level::Error => Verbosity::Quiet,
 		});
 

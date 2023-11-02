@@ -7,9 +7,10 @@ use cargo::{
 	util::command_prelude::CompileMode,
 };
 use itertools::Itertools;
+use termcolor::Color;
 
 /// How the independence check will be performed
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum IndependenceCtx {
 	/// Compile 'in place', stay within the tree, but only compile the selected packages.
 	///
@@ -23,8 +24,8 @@ pub enum IndependenceCtx {
 impl ToString for IndependenceCtx {
 	fn to_string(&self) -> String {
 		match self {
-			Self::InPlace => String::from("inplace"),
-			Self::Ephemeral => String::from("ephemeral"),
+			Self::InPlace => String::from("Inplace"),
+			Self::Ephemeral => String::from("Ephemeral"),
 		}
 	}
 }
@@ -32,7 +33,7 @@ impl ToString for IndependenceCtx {
 impl FromStr for IndependenceCtx {
 	type Err = anyhow::Error;
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		Ok(match s {
+		Ok(match s.to_lowercase().as_str() {
 			"in-place" | "inplace" | "in_place" => Self::InPlace,
 			"ephemeral" => Self::Ephemeral,
 			c => anyhow::bail!("Unknown context: {}", c),
@@ -80,12 +81,17 @@ pub fn independence_check(
 	context: IndependenceCtx,
 ) -> Result<(), anyhow::Error> {
 	let replace = Default::default();
+	let c = ws.config();
 
-	println!(
-		"Running independence check using {} context for {} packages",
-		context.to_string(),
-		packages.len()
-	);
+	c.shell().status_with_color(
+		"Processing",
+		format!(
+			"Running independence check using {} context for {} packages",
+			context.to_string(),
+			packages.len()
+		),
+		Color::Magenta,
+	)?;
 
 	for package in packages.iter() {
 		for compile_mode in modes.iter() {
@@ -98,16 +104,31 @@ pub fn independence_check(
 					.powerset()
 					.map(|v| Vec::from_iter(v.iter().map(|v| v.to_string()))),
 			);
-			println!("Checking compilation of these target permutations: {feature_permutations:?}");
 
+			let n = feature_permutations.len();
+			let name = package.name().as_str();
+			c.shell().status_with_color(
+				"Independence",
+				format!(
+				"{name} Checking compilation of these target permutations ({n}): {feature_permutations:?}"
+			),
+				Color::Magenta,
+			)?;
+
+			let compile_mode_str = compile_mode_to_string(compile_mode).unwrap();
+			let context_str = context.to_string();
 			for features in feature_permutations.iter() {
-				println!(
-					"{}: Running {} independence for package {}, with features {:?}",
-					context.to_string(),
-					compile_mode_to_string(compile_mode).unwrap(),
-					package.name(),
-					features
-				);
+				c.shell().status_with_color(
+					format!("{context_str}/{compile_mode_str}"),
+					format!(
+						"{} {} with features {:?}",
+						package.name(),
+						package.version(),
+						features
+					),
+					Color::Cyan,
+				)?;
+
 				match context {
 					IndependenceCtx::Ephemeral => {
 						let tar_rw_lock = cargo::ops::package_one(&ws, package, opts)?
@@ -130,7 +151,12 @@ pub fn independence_check(
 			}
 		}
 	}
-	println!("Checking independence succeed for all {} packages", packages.len());
+
+	c.shell().status_with_color(
+		"Done",
+		format!("Checking independence succeed for all {} packages", packages.len()),
+		Color::Magenta,
+	)?;
 
 	Ok(())
 }

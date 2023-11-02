@@ -22,14 +22,14 @@ path = "src/main.rs"
 
 [features]
 default = []
-gen-readme = ["cargo-readme", "lazy_static", "sha1"]
+gen-readme = ["dep:cargo-readme", "dep:lazy_static", "dep:sha1"]
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 clap-verbosity-flag = "2"
 
-toml_edit = "0.19"
+toml_edit = "0.20"
 log = "0.4"
 pretty_env_logger = "0.5"
 petgraph = "0.6"
@@ -41,9 +41,10 @@ itertools = "0.11"
 cargo = "0.74"
 cargo-credential = "0.3"
 flate2 = "1"
-git2 = "0.17"
+git2 = "0.17.0"
 semver = "1.0"
 tar = "0.4"
+termcolor = "1.2"
 
 # Optional dependencies
 cargo-readme = { version = "3.2", optional = true }
@@ -54,5 +55,5 @@ sha1 = { version = "0.10", optional = true }
 assert_cmd = "2.0"
 assert_fs = "1.0"
 predicates = "3"
-toml = "0.7"
+toml = "0.8"
 assert_matches = "1"
