@@ -6,8 +6,8 @@ use cargo::{
 	ops::PackageOpts,
 	util::command_prelude::CompileMode,
 };
+use clap::builder::styling::{AnsiColor, Style};
 use itertools::Itertools;
-use termcolor::Color;
 
 /// How the independence check will be performed
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -73,6 +73,11 @@ fn compile_mode_to_string(src: &CompileMode) -> Result<&'static str, anyhow::Err
 	})
 }
 
+/// Creates a `Style` from a given color.
+fn style_from_color(color: AnsiColor) -> Style {
+	Style::new().fg_color(Some(color.into()))
+}
+
 pub fn independence_check(
 	packages: Vec<Package>,
 	opts: &PackageOpts<'_>,
@@ -90,7 +95,7 @@ pub fn independence_check(
 			context.to_string(),
 			packages.len()
 		),
-		Color::Magenta,
+		&style_from_color(AnsiColor::Magenta),
 	)?;
 
 	for package in packages.iter() {
@@ -112,7 +117,7 @@ pub fn independence_check(
 				format!(
 				"{name} Checking compilation of these target permutations ({n}): {feature_permutations:?}"
 			),
-				Color::Magenta,
+				&style_from_color(AnsiColor::Magenta),
 			)?;
 
 			let compile_mode_str = compile_mode_to_string(compile_mode).unwrap();
@@ -126,7 +131,7 @@ pub fn independence_check(
 						package.version(),
 						features
 					),
-					Color::Cyan,
+					&style_from_color(AnsiColor::Cyan),
 				)?;
 
 				match context {
@@ -155,7 +160,7 @@ pub fn independence_check(
 	c.shell().status_with_color(
 		"Done",
 		format!("Checking independence succeed for all {} packages", packages.len()),
-		Color::Magenta,
+		&style_from_color(AnsiColor::Magenta),
 	)?;
 
 	Ok(())

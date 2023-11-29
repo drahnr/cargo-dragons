@@ -19,8 +19,7 @@ pub fn add_owner(
 			to_add: Some(vec![new_owner.clone()]),
 			to_remove: None,
 			list: false,
-			registry: None,
-			index: None,
+			reg_or_index: None,
 		},
 	) {
 		let msg = e.to_string();

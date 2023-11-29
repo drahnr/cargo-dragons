@@ -1,7 +1,10 @@
 use crate::util::members_deep;
 use cargo::{
-	core::{package::Package, Dependency, Source, SourceId, Workspace},
-	sources::registry::RegistrySource,
+	core::{package::Package, Dependency, SourceId, Workspace},
+	sources::{
+		registry::RegistrySource,
+		source::{QueryKind, Source},
+	},
 	util::interning::InternedString,
 };
 use log::{trace, warn};
@@ -94,7 +97,7 @@ where
 			.expect("Parsing our dependency doesn't fail");
 
 		let _ = registry
-			.query(&dep, cargo::core::QueryKind::Exact, &mut |_| {
+			.query(&dep, QueryKind::Exact, &mut |_| {
 				already_published.insert(m.name());
 			})
 			.map(|e| e.expect("Quering the local registry doesn't fail"));
@@ -286,9 +289,11 @@ publish = false
 	#[test]
 	fn mock_make_manifest_works() {
 		let cfg = Config::default().unwrap();
+		let dir =
+			tempdir::TempDir::new("mock_make_manifest_works").expect("Creating temp dir works");
 		let _ = dbg!(make_manifest(
 			&cfg,
-			PathBuf::from("/asdfjad").as_path(),
+			dir.path(),
 			"dinodinodino",
 			Version::parse("1.2.3").unwrap(),
 			SourceId::crates_io(&cfg).unwrap(),
@@ -436,10 +441,6 @@ publish = false
 		}
 	}
 
-	fn test_tmp_dir(name: &'static str) -> PathBuf {
-		std::env::temp_dir().join("cargo-dragons").join(name)
-	}
-
 	/// Setup the following directory structure
 	/// ```
 	/// $OUT_DIR/integration
@@ -466,8 +467,7 @@ publish = false
 	/// containing only a `workspace` declaration.
 	#[test]
 	fn diamond() -> Result<()> {
-		let tmp = test_tmp_dir("diamond");
-		let target_dir = tmp.clone();
+		let tmp = tempdir::TempDir::new("diamond").expect("Can create temp dir");
 
 		let mut wsb = WorkspaceBuilder::default();
 		wsb.add_crate("top")
@@ -478,8 +478,8 @@ publish = false
 		wsb.add_crate("dy").version(15, 100, 0).add_dependency("closing", "1.6.1")?;
 		wsb.add_crate("closing").version(1, 6, 9);
 
-		let ws = wsb.build(target_dir)?;
-		let to_release = packages_to_release(&ws, |_pkg| true, tmp.join("diamond.dot"))
+		let ws = wsb.build(&tmp)?;
+		let to_release = packages_to_release(&ws, |_pkg| true, tmp.path().join("diamond.dot"))
 			.expect("There are no cycles in a diamond shaped, directed, dependency graph. qed");
 		// must be in release order, so the leaf has to have a lower index, dependencies on the same
 		// level are ordered by there reverse appearance in the members declaration
@@ -492,17 +492,17 @@ publish = false
 
 	#[test]
 	fn circular() -> Result<()> {
-		let tmp = test_tmp_dir("circular");
-		let target_dir = tmp.clone();
+		let tmp = tempdir::TempDir::new("circular").expect("Can create temp dir");
 
 		let mut wsb = WorkspaceBuilder::default();
 		wsb.add_crate("a").version(3, 0, 0).add_dependency("b", "*")?;
 		wsb.add_crate("b").version(2, 0, 0).add_dependency("c", "*")?;
 		wsb.add_crate("c").version(1, 0, 0).add_dependency("a", "*")?;
 
-		let ws = wsb.build(target_dir)?;
+		let ws = wsb.build(&tmp)?;
 		let ErrorWithCycles(cycles, _err) =
-			packages_to_release_inner(&ws, |_pkg| true, tmp.join("circular.dot")).unwrap_err();
+			packages_to_release_inner(&ws, |_pkg| true, tmp.path().join("circular.dot"))
+				.unwrap_err();
 		assert_eq!(cycles.len(), 1);
 		assert_eq!(cycles[0].len(), 3);
 		// The start node is defined by the sequence in the members declaration

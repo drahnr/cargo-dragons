@@ -21,17 +21,16 @@ pub fn release(
 		dry_run,
 		config: c,
 		allow_dirty: true,
-		index: None,
 		jobs: None,
 		to_publish: ops::Packages::Default,
 		targets: Default::default(),
-		registry: None,
 		cli_features: CliFeatures {
 			features: Default::default(),
 			all_features: false,
 			uses_default_features: true,
 		},
 		keep_going: false,
+		reg_or_index: None,
 	};
 	let delay = {
 		if packages.len() > 29 {

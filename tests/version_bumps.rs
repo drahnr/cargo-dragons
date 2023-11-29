@@ -1,6 +1,6 @@
 use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
-use cargo::{core::source::SourceId, ops::read_package, util::config::Config as CargoConfig};
+use cargo::{core::SourceId, ops::read_package, util::config::Config as CargoConfig};
 use semver::Version;
 use std::process::Command;
 
