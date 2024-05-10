@@ -12,7 +12,7 @@ mod version;
 
 pub use add_owner::add_owner;
 pub use check::check_packages;
-pub use check_independence::{independence_check, IndependenceCtx, IndependenceMode};
+pub use check_independence::{independence_check, IndependenceCtx};
 pub use clean_deps::clean_up_unused_dependencies;
 pub use de_dev_deps::deactivate_dev_dependencies;
 pub use release::release;
@@ -20,7 +20,7 @@ pub use rename::rename;
 pub use set_field::set_field;
 pub use to_release::packages_to_release;
 pub use unifydeps::unify_dependencies;
-pub use version::{adjust_version, set_version};
+pub use version::adjust_version;
 
 #[cfg(feature = "gen-readme")]
 mod readme;
