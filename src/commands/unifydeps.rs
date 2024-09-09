@@ -3,6 +3,7 @@ use crate::util::{edit_each, members_deep};
 use cargo::core::package::Package;
 
 use cargo::core::Workspace;
+use cargo::ops;
 use toml_edit::{Formatted, InlineTable, Item, Key, Table, TableLike, Value};
 
 trait SortableTableKeysBy {
@@ -67,52 +68,54 @@ where
 	P: Fn(&Package) -> bool,
 {
 	let c = ws.config();
-	let _manifest = ws.root_manifest();
+	let manifest_path = ws.root_manifest().to_path_buf();
 	let Some(ws_config) = ws.load_workspace_config()? else {
 		anyhow::bail!("Must be workspace");
 	};
-	let inh = ws_config.inheritable();
-	let dependencies_to_unify = inh.dependencies()?;
-
+	// let inh = ws_config.inheritable();
+	let cfg = ws.config();
+	let (pkgs, resolve) = ops::resolve_ws(&ws)?;
+	
 	edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
 		let per_table = |deps: &mut Item| {
-			if let Some(deps) = deps.as_table_mut() {
-				for dep in dependencies_to_unify.keys() {
-					match deps.entry(dep) {
-						toml_edit::Entry::Vacant(_) => {},
-						toml_edit::Entry::Occupied(mut occ) => {
-							let occ = occ.get_mut();
+			let Some(deps) = deps.as_table_mut() else { return Ok(()) };
+		
+		let dependencies_to_unify = pkgs.package_ids().map(|pid| pid.name().as_str());
+			for dep in dependencies_to_unify {
+				match deps.entry(dep) {
+					toml_edit::Entry::Vacant(_) => {},
+					toml_edit::Entry::Occupied(mut occ) => {
+						let occ = occ.get_mut();
 
-							if let Some(tab) = occ.as_table_mut() {
-								// [dependencies.foo]
-								replace_version_by_workspace(c, p.name().as_str(), tab);
-							} else if let Some(value) = occ.as_value_mut() {
-								// foo = ..
-								match value {
-									Value::InlineTable(tab) => {
-										// foo = { version = "0.1" , feature ... }
-										replace_version_by_workspace(c, p.name().as_str(), tab)
-									},
-									occ @ Value::String(_) => {
-										// foo = "0.1"
-										let mut tab = InlineTable::new();
-										tab.insert(
-											"workspace",
-											Value::Boolean(Formatted::new(true))
-												.decorated(" ", " "),
-										);
-										*occ = Value::InlineTable(tab);
-									},
-									unknown => anyhow::bail!("Unknown {}", unknown),
-								}
-							} else {
-								c.shell()
-									.warn("Neither a table nor value, unable to deal with.")
-									.unwrap();
-								continue;
+						if let Some(tab) = occ.as_table_mut() {
+							// [dependencies.foo]
+							replace_version_by_workspace(c, p.name().as_str(), tab);
+						} else if let Some(value) = occ.as_value_mut() {
+							// foo = ..
+							match value {
+								Value::InlineTable(tab) => {
+									// foo = { version = "0.1" , feature ... }
+									replace_version_by_workspace(c, p.name().as_str(), tab)
+								},
+								occ @ Value::String(_) => {
+									// foo = "0.1"
+									let mut tab = InlineTable::new();
+									tab.insert(
+										"workspace",
+										Value::Boolean(Formatted::new(true))
+											.decorated(" ", " "),
+									);
+									*occ = Value::InlineTable(tab);
+								},
+								unknown => anyhow::bail!("Unknown {}", unknown),
 							}
-						},
-					}
+						} else {
+							c.shell()
+								.warn("Neither a table nor value, unable to deal with.")
+								.unwrap();
+							continue;
+						}
+					},
 				}
 			}
 			Ok(())

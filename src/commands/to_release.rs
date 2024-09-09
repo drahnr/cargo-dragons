@@ -88,7 +88,7 @@ where
 		ws.config(),
 	)
 	.expect("Failed getting remote registry");
-	let lock = ws.config().acquire_package_cache_lock();
+	let lock = ws.config().acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::Shared);
 
 	registry.invalidate_cache();
 
