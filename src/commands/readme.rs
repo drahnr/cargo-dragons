@@ -50,12 +50,11 @@ pub fn check_pkg_readme<'a>(
 	pkg_path: &Path,
 	pkg_manifest: &Manifest,
 ) -> Result<()> {
-	let c = ws.config();
-
 	let mut pkg_source = find_entrypoint(pkg_path)?;
 	let readme_path = pkg_path.join("README.md");
 
-	c.shell().status("Checking", format!("Readme for {}", &pkg_manifest.name()))?;
+	gctx.shell()
+		.status("Checking", format!("Readme for {}", &pkg_manifest.name()))?;
 
 	let pkg_readme = fs::read_to_string(readme_path.clone());
 	match pkg_readme {
@@ -75,15 +74,15 @@ pub fn check_pkg_readme<'a>(
 }
 
 pub fn gen_all_readme<'a>(
+	gctx: &GlobalContext,
 	packages: Vec<Package>,
 	ws: &Workspace<'a>,
 	readme_mode: GenerateReadmeMode,
 ) -> Result<()> {
-	let c = ws.config();
-	c.shell().status("Generating", "Readme files")?;
+	gctx.shell().status("Generating", "Readme files")?;
 	for pkg in packages.into_iter() {
 		let pkg_name = &pkg.name().clone();
-		gen_pkg_readme(ws, pkg, &readme_mode)
+		gen_pkg_readme(gctx, ws, pkg, &readme_mode)
 			.context(format!("Failure generating Readme for {:}", pkg_name))?
 	}
 
@@ -91,11 +90,11 @@ pub fn gen_all_readme<'a>(
 }
 
 pub fn gen_pkg_readme<'a>(
+	gctx: &GlobalContext,
 	ws: &Workspace<'a>,
 	pkg: Package,
 	mode: &GenerateReadmeMode,
 ) -> Result<()> {
-	let c = ws.config();
 	let root_path = ws.root();
 
 	let pkg_manifest = pkg.manifest();
@@ -110,13 +109,14 @@ pub fn gen_pkg_readme<'a>(
 	let pkg_readme = fs::read_to_string(readme_path.clone());
 	match (mode, pkg_readme) {
 		(GenerateReadmeMode::IfMissing, Ok(_existing_readme)) => {
-			c.shell().status("Skipping", format!("{}: Readme already exists.", &pkg_name))?;
+			gctx.shell()
+				.status("Skipping", format!("{}: Readme already exists.", &pkg_name))?;
 			set_readme_field(pkg)?;
 			Ok(())
 		},
 		(mode, existing_res) => {
 			let template_path = find_readme_template(&ws.root(), &pkg_path)?;
-			c.shell().status(
+			gctx.shell().status(
 				"Generating",
 				format!(
 					"Readme for {} (template: {:?})",
@@ -236,9 +236,8 @@ fn rewrite_matched_doc_link(caps: &Captures, pkg_name: &str, doc_uri: Option<&st
 		// Skip absolute links
 		Some(url) if url.as_str().starts_with("http") => caps[0].to_string(),
 		// Handle relative links to sibling crate
-		Some(url) if url.as_str().starts_with("../") => {
-			make_sibling_doc_link(caps.name("text").unwrap().as_str(), &url.as_str()[3..], doc_uri)
-		},
+		Some(url) if url.as_str().starts_with("../") =>
+			make_sibling_doc_link(caps.name("text").unwrap().as_str(), &url.as_str()[3..], doc_uri),
 		// Handle relative links to current crate
 		Some(url) => make_relative_doc_link(
 			caps.name("text").unwrap().as_str(),

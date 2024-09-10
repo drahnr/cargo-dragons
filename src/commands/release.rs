@@ -2,24 +2,25 @@ use crate::commands::add_owner;
 use cargo::{
 	core::{package::Package, resolver::features::CliFeatures, Workspace},
 	ops::{self, publish, PublishOpts},
+	GlobalContext,
 };
 use cargo_credential::Secret;
 
 use std::{thread, time::Duration};
 
 pub fn release(
+	gctx: &GlobalContext,
 	packages: Vec<Package>,
 	ws: Workspace<'_>,
 	dry_run: bool,
 	token: Option<Secret<String>>,
 	owner: Option<String>,
 ) -> Result<(), anyhow::Error> {
-	let c = ws.config();
 	let opts = PublishOpts {
+		gctx,
 		verify: false,
 		token: token.clone(),
 		dry_run,
-		config: c,
 		allow_dirty: true,
 		jobs: None,
 		to_publish: ops::Packages::Default,
@@ -43,21 +44,21 @@ pub fn release(
 		}
 	};
 
-	c.shell().status("Publishing", "Packages")?;
+	gctx.shell().status("Publishing", "Packages")?;
 	for (idx, pkg) in packages.iter().enumerate() {
 		if idx > 0 && delay > 0 {
-			c.shell().status(
+			gctx.shell().status(
 				"Waiting",
 				"published 30 crates – API limits require us to wait in between.",
 			)?;
 			thread::sleep(Duration::from_secs(delay));
 		}
 
-		let pkg_ws = Workspace::ephemeral(pkg.clone(), c, Some(ws.target_dir()), true)?;
-		c.shell().status("Publishing", pkg)?;
+		let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
+		gctx.shell().status("Publishing", pkg)?;
 		publish(&pkg_ws, &opts)?;
 		if let Some(ref o) = owner {
-			add_owner(c, pkg, o.clone(), token.clone())?;
+			add_owner(gctx, pkg, o.clone(), token.clone())?;
 		}
 	}
 	Ok(())

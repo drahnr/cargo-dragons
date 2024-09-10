@@ -5,6 +5,7 @@ use cargo::{
 	core::{package::Package, Workspace},
 	ops::PackageOpts,
 	util::command_prelude::CompileMode,
+	GlobalContext,
 };
 use clap::builder::styling::{AnsiColor, Style};
 use itertools::Itertools;
@@ -79,6 +80,7 @@ fn style_from_color(color: AnsiColor) -> Style {
 }
 
 pub fn independence_check(
+	gctx: &GlobalContext,
 	packages: Vec<Package>,
 	opts: &PackageOpts<'_>,
 	ws: Workspace<'_>,
@@ -86,9 +88,8 @@ pub fn independence_check(
 	context: IndependenceCtx,
 ) -> Result<(), anyhow::Error> {
 	let replace = Default::default();
-	let c = ws.config();
 
-	c.shell().status_with_color(
+	gctx.shell().status_with_color(
 		"Processing",
 		format!(
 			"Running independence check using {} context for {} packages",
@@ -112,7 +113,7 @@ pub fn independence_check(
 
 			let n = feature_permutations.len();
 			let name = package.name().as_str();
-			c.shell().status_with_color(
+			gctx.shell().status_with_color(
 				"Independence",
 				format!(
 				"{name} Checking compilation of these target permutations ({n}): {feature_permutations:?}"
@@ -123,7 +124,7 @@ pub fn independence_check(
 			let compile_mode_str = compile_mode_to_string(compile_mode).unwrap();
 			let context_str = context.to_string();
 			for features in feature_permutations.iter() {
-				c.shell().status_with_color(
+				gctx.shell().status_with_color(
 					format!("{context_str}/{compile_mode_str}"),
 					format!(
 						"{} {} with features {:?}",
@@ -136,10 +137,10 @@ pub fn independence_check(
 
 				match context {
 					IndependenceCtx::Ephemeral => {
-						let tar_rw_lock = cargo::ops::package_one(&ws, package, opts)?
-							.expect("Not listing, hence result is always `Some(_)`. qed");
+						let tar_rw_lock = cargo::ops::package_one(&ws, package, opts)?;
 
 						run_check_ephemeral(
+							gctx,
 							&ws,
 							package,
 							&tar_rw_lock,
@@ -150,14 +151,14 @@ pub fn independence_check(
 						)?;
 					},
 					IndependenceCtx::InPlace => {
-						run_check_inplace(&ws, package, opts, *compile_mode, features)?;
+						run_check_inplace(gctx, &ws, package, opts, *compile_mode, features)?;
 					},
 				};
 			}
 		}
 	}
 
-	c.shell().status_with_color(
+	gctx.shell().status_with_color(
 		"Done",
 		format!("Checking independence succeed for all {} packages", packages.len()),
 		&style_from_color(AnsiColor::Magenta),

@@ -1,9 +1,10 @@
 use crate::util::{edit_each, members_deep};
 
+use anyhow::{bail, Context};
 use cargo::core::package::Package;
 
-use cargo::core::Workspace;
-use cargo::ops;
+use cargo::{core::Workspace, GlobalContext};
+use cargo_util_schemas::manifest::TomlManifest;
 use toml_edit::{Formatted, InlineTable, Item, Key, Table, TableLike, Value};
 
 trait SortableTableKeysBy {
@@ -30,16 +31,19 @@ impl SortableTableKeysBy for InlineTable {
 	}
 }
 
+fn log(gctx: &GlobalContext, packet: &str, dep: &str, ver: &str) {
+	gctx.shell()
+		.status("Unifying dependency", format!("Unified {dep} @ {ver} of {packet} -> workspace"))
+		.expect("Writing to the shell would have failed before. qed");
+}
+
 fn replace_version_by_workspace<T: TableLike + SortableTableKeysBy + std::fmt::Debug>(
-	c: &cargo::Config,
+	gctx: &GlobalContext,
 	packet: &str,
+	dep_name: &str,
 	tablelike: &mut T,
 ) {
-	let message = if let Some(v) = tablelike.remove("version") {
-		format!("{:} : {:} -> workspace", packet, v)
-	} else {
-		format!("{:} : ? -> workspace", packet)
-	};
+	let Some(version) = tablelike.remove("version") else { return };
 	let suffix = match tablelike.len() {
 		0 | 1 => " ",
 		_ => "",
@@ -57,60 +61,66 @@ fn replace_version_by_workspace<T: TableLike + SortableTableKeysBy + std::fmt::D
 		}
 	});
 
-	c.shell()
-		.status("Unifying dependency", message)
-		.expect("Writing to the shell would have failed before. qed");
+	log(gctx, packet, dep_name, version.as_str().unwrap_or_default());
 }
 
 /// Deactivate the Dev Dependencies Section of the given toml
-pub fn unify_dependencies<P>(ws: &mut Workspace<'_>, predicate: P) -> Result<(), anyhow::Error>
+pub fn unify_dependencies<P>(
+	gctx: &GlobalContext,
+	ws: &mut Workspace<'_>,
+	predicate: P,
+) -> Result<(), anyhow::Error>
 where
 	P: Fn(&Package) -> bool,
 {
-	let c = ws.config();
 	let manifest_path = ws.root_manifest().to_path_buf();
-	let Some(ws_config) = ws.load_workspace_config()? else {
-		anyhow::bail!("Must be workspace");
+	let root_ws_content = std::fs::read_to_string(&manifest_path)
+		.context(format!("Failed to read root manifest {}", manifest_path.display()))?;
+	let dependencies_to_unify: TomlManifest = toml::from_str(dbg!(&root_ws_content))?;
+	let Some(dependencies_to_unify) = dependencies_to_unify.workspace.unwrap().dependencies else {
+		bail!("No workspace level dependencies, nothing to unify")
 	};
-	// let inh = ws_config.inheritable();
-	let cfg = ws.config();
-	let (pkgs, resolve) = ops::resolve_ws(&ws)?;
-	
-	edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
+
+	edit_each(members_deep(gctx, ws).iter().filter(|p| predicate(p)), |p, doc| {
 		let per_table = |deps: &mut Item| {
 			let Some(deps) = deps.as_table_mut() else { return Ok(()) };
-		
-		let dependencies_to_unify = pkgs.package_ids().map(|pid| pid.name().as_str());
-			for dep in dependencies_to_unify {
-				match deps.entry(dep) {
+
+			for (dep_name, _dep) in &dependencies_to_unify {
+				match deps.entry(dep_name.as_str()) {
 					toml_edit::Entry::Vacant(_) => {},
 					toml_edit::Entry::Occupied(mut occ) => {
 						let occ = occ.get_mut();
 
 						if let Some(tab) = occ.as_table_mut() {
 							// [dependencies.foo]
-							replace_version_by_workspace(c, p.name().as_str(), tab);
+							replace_version_by_workspace(gctx, p.name().as_str(), dep_name, tab);
 						} else if let Some(value) = occ.as_value_mut() {
 							// foo = ..
 							match value {
 								Value::InlineTable(tab) => {
 									// foo = { version = "0.1" , feature ... }
-									replace_version_by_workspace(c, p.name().as_str(), tab)
+									replace_version_by_workspace(
+										gctx,
+										p.name().as_str(),
+										dep_name,
+										tab,
+									)
 								},
 								occ @ Value::String(_) => {
 									// foo = "0.1"
 									let mut tab = InlineTable::new();
 									tab.insert(
 										"workspace",
-										Value::Boolean(Formatted::new(true))
-											.decorated(" ", " "),
+										Value::Boolean(Formatted::new(true)).decorated(" ", " "),
 									);
+									let version = occ.as_str().unwrap_or_default().to_string();
+									log(gctx, p.name().as_str(), dep_name, &version);
 									*occ = Value::InlineTable(tab);
 								},
 								unknown => anyhow::bail!("Unknown {}", unknown),
 							}
 						} else {
-							c.shell()
+							gctx.shell()
 								.warn("Neither a table nor value, unable to deal with.")
 								.unwrap();
 							continue;
@@ -126,7 +136,7 @@ where
 	})?;
 
 	// if updates.is_empty() {
-	// c.shell().status("Done", "No changed applied")?;
+	// gctx.shell().status("Done", "No changed applied")?;
 	// }
 
 	Ok(())

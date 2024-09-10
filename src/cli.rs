@@ -1,7 +1,8 @@
 use anyhow::Context;
 use cargo::{
-	core::{package::Package, resolver::CliFeatures, Verbosity, Workspace},
-	util::{command_prelude::CompileMode, config::Config as CargoConfig},
+	core::{package::Package, resolver::CliFeatures, Shell, Verbosity, Workspace},
+	util::command_prelude::CompileMode,
+	GlobalContext,
 };
 use cargo_credential::Secret;
 use regex::Regex;
@@ -466,20 +467,24 @@ fn verify_readme_feature() -> anyhow::Result<()> {
 pub fn run(args: Args) -> Result<(), anyhow::Error> {
 	pretty_env_logger::init();
 
-	let c = CargoConfig::default().expect("Couldn't create cargo config");
-	c.values()?;
-	c.load_credentials()?;
+	let gctx = GlobalContext::new(
+		Shell::new(),
+		args.manifest_path.parent().unwrap().to_path_buf(),
+		dirs::home_dir().unwrap(),
+	);
+	gctx.values()?;
+	gctx.load_credentials()?;
 
 	let get_token = |t| -> Result<Option<Secret<String>>, anyhow::Error> {
 		Ok(match t {
-			None => c
+			None => gctx
 				.get_string("registry.token")?
 				.map(|token_json_val| Secret::from(token_json_val.val)),
 			_ => t,
 		})
 	};
 
-	c.shell()
+	gctx.shell()
 		.set_verbosity(match args.verbosity.log_level().unwrap_or(log::Level::Error) {
 			log::Level::Trace | log::Level::Debug => Verbosity::Verbose,
 			log::Level::Info => Verbosity::Normal,
@@ -495,7 +500,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 		fs::canonicalize(path)?
 	};
 
-	let mut ws = Workspace::new(&root_manifest, &c).context("Reading workspace failed")?;
+	let mut ws = Workspace::new(&root_manifest, &gctx).context("Reading workspace failed")?;
 
 	let maybe_patch =
 		|ws, shouldnt_patch, predicate: &dyn Fn(&Package) -> bool| -> anyhow::Result<Workspace> {
@@ -503,16 +508,17 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 				return Ok(ws);
 			}
 
-			c.shell().status("Preparing", "Disabling Dev Dependencies")?;
+			gctx.shell().status("Preparing", "Disabling Dev Dependencies")?;
 
 			commands::deactivate_dev_dependencies(
 				ws.members()
-					.filter(|p| predicate(p) && c.shell().status("Patching", p.name()).is_ok()),
+					.filter(|p| predicate(p) && gctx.shell().status("Patching", p.name()).is_ok()),
 			)?;
 			// assure to re-read the workspace, otherwise `fn to_release` will still find cycles
 			// (rightfully so!)
-			Workspace::new(&root_manifest, &c).context("Reading workspace failed")
+			Workspace::new(&root_manifest, &gctx).context("Reading workspace failed")
 		};
+
 	//TODO: Seperate matching from Command implementations to make this a more readable codebase
 	match args.cmd {
 		Command::Completions { shell } => {
@@ -523,15 +529,15 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			Ok(())
 		},
 		Command::CleanDeps { pkg_opts, check_only } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-			commands::clean_up_unused_dependencies(&ws, predicate, check_only)
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+			commands::clean_up_unused_dependencies(&gctx, &ws, predicate, check_only)
 		},
 		Command::AddOwner { owner, token, pkg_opts } => {
 			let token = get_token(token.map(Secret::from))?;
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
 			for pkg in ws.members().filter(|p| predicate(p)) {
-				commands::add_owner(ws.config(), pkg, owner.clone(), token.clone())?;
+				commands::add_owner(&gctx, pkg, owner.clone(), token.clone())?;
 			}
 			Ok(())
 		},
@@ -539,7 +545,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			if name == "name" {
 				anyhow::bail!("To change the name please use the rename command!");
 			}
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let type_value =
 				if let Ok(v) = bool::from_str(&value).map_err(|_| i64::from_str(&value)) {
 					Value::from(v)
@@ -548,38 +554,39 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 				};
 
 			commands::set_field(
-				ws.members()
-					.filter(|p| predicate(p) && c.shell().status("Setting on", p.name()).is_ok()),
+				ws.members().filter(|p| {
+					predicate(p) && gctx.shell().status("Setting on", p.name()).is_ok()
+				}),
 				root_key,
 				name,
 				type_value,
 			)
 		},
 		Command::UnifyDeps { pkg_opts } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
-			commands::unify_dependencies(&mut ws, predicate)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+			commands::unify_dependencies(&gctx, &mut ws, predicate)?;
 			Ok(())
 		},
 		Command::Rename { old_name, new_name } => {
 			let predicate = |p: &Package| p.name().to_string().trim() == old_name;
 			let renamer = |_p: &Package| Some(new_name.clone());
 
-			commands::rename(&ws, predicate, renamer)
+			commands::rename(&gctx, &ws, predicate, renamer)
 		},
 		Command::Version { cmd } => {
-			commands::adjust_version(&ws, cmd)?;
+			commands::adjust_version(&gctx, &ws, cmd)?;
 			Ok(())
 		},
 		Command::DeDevDeps { pkg_opts } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let _ = maybe_patch(ws, false, &predicate)?;
 			Ok(())
 		},
 		Command::ToRelease { include_dev, pkg_opts, empty_package_is_failure, dot_graph } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let ws = maybe_patch(ws, include_dev, &predicate)?;
 
-			let packages = commands::packages_to_release(&ws, predicate, dot_graph)?;
+			let packages = commands::packages_to_release(&gctx, &ws, predicate, dot_graph)?;
 			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
 			println!(
@@ -602,23 +609,23 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 				verify_readme_feature()?;
 			}
 
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let ws = maybe_patch(ws, include_dev, &predicate)?;
 
-			let packages = commands::packages_to_release(&ws, predicate, dot_graph)?;
+			let packages = commands::packages_to_release(&gctx, &ws, predicate, dot_graph)?;
 			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
-			commands::check_packages(&packages, &ws, build, check_readme)
+			commands::check_packages(&gctx, &packages, &ws, build, check_readme)
 		},
 		#[cfg(feature = "gen-readme")]
 		Command::GenReadme { pkg_opts, readme_mode, empty_package_is_failure } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let ws = maybe_patch(ws, false, &predicate)?;
 
 			let packages = commands::packages_to_release(&ws, predicate, None)?;
 			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
-			commands::gen_all_readme(packages, &ws, readme_mode)
+			commands::gen_all_readme(&gctx, packages, &ws, readme_mode)
 		},
 
 		Command::Unleash {
@@ -633,10 +640,10 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			empty_package_is_failure,
 			dot_graph,
 		} => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let ws = maybe_patch(ws, include_dev, &predicate)?;
 
-			let packages = commands::packages_to_release(&ws, predicate, dot_graph)?;
+			let packages = commands::packages_to_release(&gctx, &ws, predicate, dot_graph)?;
 			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
 			if !no_check {
@@ -644,27 +651,26 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 					verify_readme_feature()?;
 				}
 
-				commands::check_packages(&packages, &ws, build, check_readme)?;
+				commands::check_packages(&gctx, &packages, &ws, build, check_readme)?;
 			}
 
-			ws.config().shell().status(
+			gctx.shell().status(
 				"Releasing",
 				Vec::from_iter(packages.iter().map(|p| format!("{} ({})", p.name(), p.version())))
 					.join(", "),
 			)?;
 
 			let token = get_token(token.map(Secret::from))?;
-			commands::release(packages, ws, dry_run, token, add_owner)
+			commands::release(&gctx, packages, ws, dry_run, token, add_owner)
 		},
 		Command::IndependenceCheck { mode: modes, context, pkg_opts, failfast } => {
-			let predicate = make_pkg_predicate(&ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
 			let packages = Vec::<Package>::from_iter(
-				members_deep(&ws).iter().filter(|p| predicate(p)).cloned(),
+				members_deep(&gctx, &ws).iter().filter(|p| predicate(p)).cloned(),
 			);
-
 			let opts = cargo::ops::PackageOpts {
-				config: &c,
+				gctx: &gctx,
 				verify: false,
 				check_metadata: false,
 				list: false,
@@ -680,7 +686,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 				keep_going: !failfast,
 			};
 
-			commands::independence_check(packages, &opts, ws, modes, context)
+			commands::independence_check(&gctx, packages, &opts, ws, modes, context)
 		},
 	}
 }

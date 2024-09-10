@@ -1,5 +1,8 @@
 use crate::util::{edit_each, edit_each_dep, members_deep, DependencyAction, DependencyEntry};
-use cargo::core::{package::Package, Workspace};
+use cargo::{
+	core::{package::Package, Workspace},
+	GlobalContext,
+};
 use log::trace;
 use std::collections::HashMap;
 use toml_edit::{Item, Value};
@@ -40,18 +43,21 @@ fn check_for_update(
 
 /// For packages matching predicate set to mapper given version, if any. Update all members
 /// dependencies if necessary.
-pub fn rename<M, P>(ws: &Workspace<'_>, predicate: P, mapper: M) -> Result<(), anyhow::Error>
+pub fn rename<M, P>(
+	gctx: &GlobalContext,
+	ws: &Workspace<'_>,
+	predicate: P,
+	mapper: M,
+) -> Result<(), anyhow::Error>
 where
 	P: Fn(&Package) -> bool,
 	M: Fn(&Package) -> Option<String>,
 {
-	let c = ws.config();
-
 	let updates = HashMap::<String, String>::from_iter(
-		edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
+		edit_each(members_deep(gctx, ws).iter().filter(|p| predicate(p)), |p, doc| {
 			Ok(mapper(p).map(|new_name| {
-				c.shell()
-					.status("Renaming", format!("{:} -> {:}", p.name(), new_name))
+				gctx.shell()
+					.status("Renaming", format!("{:} -> {:}", dbg!(&p).name(), new_name))
 					.expect("Writing to the shell would have failed before. qed");
 				doc["package"]["name"] =
 					Item::Value(Value::from(new_name.to_string()).decorated(" ", ""));
@@ -63,13 +69,13 @@ where
 	);
 
 	if updates.is_empty() {
-		c.shell().status("Done", "No changed applied")?;
+		gctx.shell().status("Done", "No changed applied")?;
 		return Ok(());
 	}
 
-	c.shell().status("Updating", "Dependency tree")?;
-	edit_each(members_deep(ws).iter(), |p, doc| {
-		c.shell().status("Updating", p.name())?;
+	gctx.shell().status("Updating", "Dependency tree")?;
+	edit_each(members_deep(gctx, ws).iter(), |p, doc| {
+		gctx.shell().status("Updating", p.name())?;
 		let root = doc.as_table_mut();
 		let mut updates_count = 0;
 		updates_count += edit_each_dep(root, |a, _, b, _| check_for_update(a, b, &updates));
@@ -92,11 +98,11 @@ where
 		}
 
 		if updates_count == 0 {
-			c.shell().status("Done", "No dependency updates")?;
+			gctx.shell().status("Done", "No dependency updates")?;
 		} else if updates_count == 1 {
-			c.shell().status("Done", "One dependency updated")?;
+			gctx.shell().status("Done", "One dependency updated")?;
 		} else {
-			c.shell().status("Done", format!("{} dependencies updated", updates_count))?;
+			gctx.shell().status("Done", format!("{} dependencies updated", updates_count))?;
 		}
 
 		Ok(())

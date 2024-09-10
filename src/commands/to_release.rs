@@ -6,6 +6,7 @@ use cargo::{
 		source::{QueryKind, Source},
 	},
 	util::interning::InternedString,
+	GlobalContext,
 };
 use log::{trace, warn};
 use petgraph::{
@@ -23,6 +24,7 @@ use std::{
 
 /// Generate the packages we should be releasing
 pub fn packages_to_release<F, D>(
+	gctx: &GlobalContext,
 	ws: &Workspace<'_>,
 	predicate: F,
 	write_dot_graph: D,
@@ -31,7 +33,7 @@ where
 	F: Fn(&Package) -> bool,
 	D: Into<Option<PathBuf>>,
 {
-	packages_to_release_inner::<F, D>(ws, predicate, write_dot_graph).map_err(
+	packages_to_release_inner::<F, D>(gctx, ws, predicate, write_dot_graph).map_err(
 		|ErrorWithCycles(cycles, e)| {
 			let named = Vec::from_iter(
 				cycles.iter().map(|cycle| cycle.iter().map(|pkg| pkg.name().as_str())),
@@ -53,6 +55,7 @@ impl<T: Into<anyhow::Error>> From<T> for ErrorWithCycles {
 }
 
 fn packages_to_release_inner<F, D>(
+	gctx: &GlobalContext,
 	ws: &Workspace<'_>,
 	predicate: F,
 	write_dot_graph: D,
@@ -62,33 +65,31 @@ where
 	D: Into<Option<PathBuf>>,
 {
 	// inspired by the work of `cargo-publish-all`: https://gitlab.com/torkleyy/cargo-publish-all
-	ws.config()
-		.shell()
+	gctx.shell()
 		.status("Resolving", "Dependency Tree")
 		.expect("Writing to Shell doesn't fail");
 
 	let mut graph = Graph::<Package, (), Directed, u32>::new();
-	let members = members_deep(ws);
+	let members = members_deep(gctx, ws);
 
 	let (members, to_ignore): (Vec<_>, Vec<_>) = members.iter().partition(|m| predicate(m));
 
 	let ignored = HashSet::<InternedString>::from_iter(to_ignore.into_iter().map(|m| m.name()));
 
-	ws.config()
-		.shell()
+	gctx.shell()
 		.status("Syncing", "Versions from crates.io")
 		.expect("Writing to Shell doesn't fail");
 
 	let mut already_published = HashSet::new();
 	let mut registry = RegistrySource::remote(
-		SourceId::crates_io(ws.config()).expect(
+		SourceId::crates_io(gctx).expect(
 			"Your main registry (usually crates.io) can't be read. Please check your .cargo/config",
 		),
 		&Default::default(),
-		ws.config(),
+		gctx,
 	)
 	.expect("Failed getting remote registry");
-	let lock = ws.config().acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::Shared);
+	let lock = gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::Shared)?;
 
 	registry.invalidate_cache();
 
@@ -114,7 +115,7 @@ where
 			Some((member.name(), graph.add_node(member.clone())))
 		}));
 
-	let default_registry = SourceId::crates_io(ws.config())?;
+	let default_registry = SourceId::crates_io(gctx)?;
 	for member in members {
 		let current_index = match map.get(&member.name()) {
 			Some(i) => i,
@@ -262,8 +263,8 @@ publish = false
 
 		let toml_manifest =
 			dependencies.as_ref().iter().fold(toml_manifest, |toml_manifest, dep| {
-				toml_manifest
-					+ format!(
+				toml_manifest +
+					format!(
 						r###"
 {name} = "{version}""###,
 						name = dep.package_name(),

@@ -38,10 +38,10 @@ anyhow = "1"
 itertools = "0.13"
 
 # CARGO VERSION BOUND dependencies
-cargo = "0.76"
+cargo = "0.82"
 cargo-credential = "0.4"
 flate2 = "1"
-git2 = "0.18"
+git2 = "0.19"
 semver = "1.0"
 tar = "0.4"
 termcolor = "1.2"
@@ -50,6 +50,9 @@ termcolor = "1.2"
 cargo-readme = { version = "3.2", optional = true }
 lazy_static = { version = "1.4", optional = true }
 sha1 = { version = "0.10", optional = true }
+dirs = "5.0.1"
+toml = { version = "0.8", features = ["indexmap"] }
+cargo-util-schemas = "0.5.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
