@@ -6,7 +6,10 @@ use crate::{
 	},
 };
 use anyhow::Context;
-use cargo::core::{package::Package, Workspace};
+use cargo::{
+	core::{package::Package, Workspace},
+	GlobalContext,
+};
 use log::trace;
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
 use std::collections::HashMap;
@@ -93,6 +96,7 @@ fn check_for_update(
 /// For packages matching predicate set to mapper given version, if any. Update all members
 /// dependencies if necessary.
 pub fn set_version<M, P>(
+	gctx: &GlobalContext,
 	ws: &Workspace<'_>,
 	predicate: P,
 	mapper: M,
@@ -102,12 +106,10 @@ where
 	P: Fn(&Package) -> bool,
 	M: Fn(&Package) -> Option<Version>,
 {
-	let c = ws.config();
-
 	let updates = HashMap::<String, Version>::from_iter(
-		edit_each(members_deep(ws).iter().filter(|p| predicate(p)), |p, doc| {
+		edit_each(members_deep(gctx, ws).iter().filter(|p| predicate(p)), |p, doc| {
 			Ok(mapper(p).map(|nv_version| {
-				c.shell()
+				gctx.shell()
 					.status(
 						"Bumping",
 						format!("{:}: {:} -> {:}", p.name(), p.version(), nv_version),
@@ -122,9 +124,9 @@ where
 		.flatten(),
 	);
 
-	c.shell().status("Updating", "Dependency tree")?;
-	edit_each(members_deep(ws).iter(), |p, doc| {
-		c.shell().status("Updating", p.name())?;
+	gctx.shell().status("Updating", "Dependency tree")?;
+	edit_each(members_deep(gctx, ws).iter(), |p, doc| {
+		gctx.shell().status("Updating", p.name())?;
 		let root = doc.as_table_mut();
 		let mut updates_count = 0;
 		updates_count += edit_each_dep(root, |name, _, wrap, section| {
@@ -157,7 +159,7 @@ where
 		} else if updates_count == 1 {
 			status_message = "One dependency updated".to_owned();
 		}
-		c.shell().status(status, status_message)?;
+		gctx.shell().status(status, status_message)?;
 		Ok(())
 	})?;
 
@@ -182,15 +184,20 @@ fn bump_patch_version(v: &mut Version) {
 }
 
 /// Adjust the version of the crate according to the given version adjustment command
-pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), anyhow::Error> {
+pub fn adjust_version(
+	gctx: &GlobalContext,
+	ws: &Workspace<'_>,
+	cmd: VersionCommand,
+) -> Result<(), anyhow::Error> {
 	match cmd {
 		VersionCommand::Set { pkg_opts, force_update, version } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
-			set_version(ws, |p| predicate(p), |_| Some(version.clone()), force_update)
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
+			set_version(gctx, ws, |p| predicate(p), |_| Some(version.clone()), force_update)
 		},
 		VersionCommand::BumpPre { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -220,8 +227,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpPatch { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -234,8 +242,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpMinor { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -248,8 +257,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpMajor { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -262,8 +272,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpBreaking { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -284,9 +295,10 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::BumpToDev { pkg_opts, force_update, pre_tag } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			let pre_val = pre_tag.unwrap_or_else(|| "dev".to_owned());
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -308,8 +320,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::SetPre { pre, pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -321,8 +334,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::SetBuild { meta, pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {
@@ -335,8 +349,9 @@ pub fn adjust_version(ws: &Workspace<'_>, cmd: VersionCommand) -> Result<(), any
 			)
 		},
 		VersionCommand::Release { pkg_opts, force_update } => {
-			let predicate = make_pkg_predicate(ws, pkg_opts)?;
+			let predicate = make_pkg_predicate(gctx, ws, pkg_opts)?;
 			set_version(
+				gctx,
 				ws,
 				|p| predicate(p),
 				|p| {

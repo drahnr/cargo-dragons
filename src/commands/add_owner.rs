@@ -1,18 +1,18 @@
 use cargo::{
 	core::package::Package,
 	ops::{modify_owners, OwnersOptions},
-	util::config::Config,
+	GlobalContext,
 };
 use cargo_credential::Secret;
 
 pub fn add_owner(
-	c: &Config,
+	gctx: &GlobalContext,
 	package: &Package,
 	new_owner: String,
 	token: Option<Secret<String>>,
 ) -> Result<(), anyhow::Error> {
 	if let Err(e) = modify_owners(
-		c,
+		gctx,
 		&OwnersOptions {
 			token,
 			krate: Some(package.name().to_string()),
@@ -27,7 +27,7 @@ pub fn add_owner(
 			anyhow::bail!(msg)
 		}
 
-		c.shell()
+		gctx.shell()
 			.status("Owner", format!("{:} is already an owner of {:}", new_owner, package.name()))
 			.expect("Shell worked before. qed")
 	}

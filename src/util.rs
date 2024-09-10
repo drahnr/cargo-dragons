@@ -2,20 +2,21 @@ use anyhow::Context;
 use cargo::{
 	core::{package::Package, Workspace},
 	sources::PathSource,
+	GlobalContext,
 };
 use git2::Repository;
 use log::{trace, warn};
 use std::{collections::HashSet, fs};
-use toml_edit::{Document, InlineTable, Item, Table, Value};
+use toml_edit::{DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::cli::PackageSelectOptions;
 
 pub fn changed_packages(
+	gctx: &GlobalContext,
 	ws: &Workspace,
 	reference: &str,
 ) -> Result<HashSet<Package>, anyhow::Error> {
-	ws.config()
-		.shell()
+	gctx.shell()
 		.status("Calculating", format!("git diff since {:}", reference))
 		.expect("Writing to Shell doesn't fail");
 
@@ -47,7 +48,7 @@ pub fn changed_packages(
 
 	let mut packages = HashSet::new();
 
-	for m in members_deep(ws) {
+	for m in members_deep(gctx, ws) {
 		let root = m.root();
 		for f in files.iter() {
 			if f.starts_with(root) {
@@ -61,7 +62,7 @@ pub fn changed_packages(
 }
 
 // Find all members of the workspace, into the total depth
-pub fn members_deep(ws: &'_ Workspace) -> Vec<Package> {
+pub fn members_deep(gctx: &GlobalContext, ws: &'_ Workspace) -> Vec<Package> {
 	let mut total_list = Vec::new();
 	for m in ws.members() {
 		total_list.push(m.clone());
@@ -69,7 +70,7 @@ pub fn members_deep(ws: &'_ Workspace) -> Vec<Package> {
 			let source = dep.source_id();
 			if source.is_path() {
 				let dst = source.url().to_file_path().expect("It was just checked before. qed");
-				let mut src = PathSource::new(&dst, source, ws.config());
+				let mut src = PathSource::new(&dst, source, gctx);
 				let pkg = src.root_package().expect("Path must have a package");
 				if !ws.is_member(&pkg) {
 					total_list.push(pkg);
@@ -86,14 +87,14 @@ fn get_type_of<T>(_: &T) -> String {
 /// Run f on every package's manifest, write the doc. Fail on first error
 pub fn edit_each<'a, I, F, R>(iter: I, f: F) -> Result<Vec<R>, anyhow::Error>
 where
-	F: Fn(&'a Package, &mut Document) -> Result<R, anyhow::Error>,
+	F: Fn(&'a Package, &mut DocumentMut) -> Result<R, anyhow::Error>,
 	I: Iterator<Item = &'a Package>,
 {
 	let mut results = Vec::new();
 	for pkg in iter {
 		let manifest_path = pkg.manifest_path();
 		let content = fs::read_to_string(manifest_path)?;
-		let mut doc: Document = content.parse()?;
+		let mut doc: DocumentMut = content.parse()?;
 		results.push(f(pkg, &mut doc)?);
 		fs::write(manifest_path, doc.to_string())?;
 	}
@@ -274,6 +275,7 @@ pub(crate) fn handle_empty_package_is_failures<T>(
 }
 
 pub(crate) fn make_pkg_predicate(
+	gctx: &GlobalContext,
 	ws: &Workspace<'_>,
 	args: PackageSelectOptions,
 ) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
@@ -313,7 +315,7 @@ pub(crate) fn make_pkg_predicate(
                 "-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
             );
 		}
-		Some(crate::util::changed_packages(ws, changed_since)?)
+		Some(crate::util::changed_packages(&gctx, ws, changed_since)?)
 	} else {
 		None
 	};
@@ -341,8 +343,8 @@ pub(crate) fn make_pkg_predicate(
 			if skip.iter().any(|r| r.is_match(&name)) {
 				return false;
 			}
-			if !p.version().pre.is_empty()
-				&& ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
+			if !p.version().pre.is_empty() &&
+				ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
 			{
 				return false;
 			}

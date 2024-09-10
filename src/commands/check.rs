@@ -11,8 +11,9 @@ use cargo::{
 		Feature, SourceId, Workspace,
 	},
 	ops::{self, package, PackageOpts},
-	sources::PathSource,
+	sources::{source::Source, PathSource},
 	util::{FileLock, OptVersionReq},
+	GlobalContext,
 };
 use flate2::read::GzDecoder;
 use log::error;
@@ -21,7 +22,7 @@ use std::{
 	fs::{read_to_string, write},
 };
 use tar::Archive;
-use toml_edit::{Document, Item, Value};
+use toml_edit::{DocumentMut, Item, Value};
 
 fn inject_replacement(
 	pkg: &Package,
@@ -30,7 +31,7 @@ fn inject_replacement(
 	let manifest = pkg.manifest_path();
 
 	let document = read_to_string(manifest)?;
-	let mut document = document.parse::<Document>()?;
+	let mut document = document.parse::<DocumentMut>()?;
 	let root = document.as_table_mut();
 
 	edit_each_dep(root, |name, _, entry, _| {
@@ -66,14 +67,14 @@ fn inject_replacement(
 /// Ok, if the package has been successfully compiled.
 /// Err otherwise.
 pub(crate) fn run_check_inplace<'a>(
+	gctx: &'a GlobalContext,
 	ws: &Workspace<'a>,
 	package: &Package,
 	opts: &PackageOpts<'_>,
 	build_mode: CompileMode,
 	features: &[String],
 ) -> anyhow::Result<Workspace<'a>> {
-	let config = ws.config();
-	let workspace = Workspace::new(ws.root_manifest(), ws.config())?;
+	let workspace = Workspace::new(ws.root_manifest(), gctx)?;
 
 	// Explicitly add the version to avoid conflicts, which would lead to an error.
 	let explicit = format!("{}@{}", package.name(), package.version());
@@ -82,7 +83,7 @@ pub(crate) fn run_check_inplace<'a>(
 		&workspace,
 		&ops::CompileOptions {
 			build_config: BuildConfig::new(
-				config,
+				gctx,
 				opts.jobs.clone(),
 				false,
 				&opts.targets,
@@ -94,7 +95,7 @@ pub(crate) fn run_check_inplace<'a>(
 			target_rustdoc_args: None,
 			target_rustc_args: None,
 			rustdoc_document_private_items: false,
-			honor_rust_version: false,
+			honor_rust_version: false.into(),
 			target_rustc_crate_types: None,
 		},
 	)?;
@@ -103,6 +104,7 @@ pub(crate) fn run_check_inplace<'a>(
 }
 
 pub(crate) fn run_check_ephemeral<'a>(
+	gctx: &'a GlobalContext,
 	ws: &Workspace<'a>,
 	package: &Package,
 	tar: &FileLock,
@@ -111,7 +113,6 @@ pub(crate) fn run_check_ephemeral<'a>(
 	replace: &HashMap<String, String>,
 	features: &[String],
 ) -> anyhow::Result<Workspace<'a>> {
-	let config = ws.config();
 	let pkg = ws.current()?;
 
 	let f = GzDecoder::new(tar.file());
@@ -129,20 +130,20 @@ pub(crate) fn run_check_ephemeral<'a>(
 	// package has a workspace we can still build our new crate.
 	let (src, new_pkg) = {
 		let id = SourceId::for_path(&dst)?;
-		let mut src = PathSource::new(&dst, id, ws.config());
+		let mut src = PathSource::new(&dst, id, gctx);
 		let new_pkg = src.root_package()?;
 
 		// inject our local builds
 		inject_replacement(&new_pkg, replace)?;
 
 		// parse the manifest again
-		let mut src = PathSource::new(&dst, id, ws.config());
+		let mut src = PathSource::new(&dst, id, gctx);
 		let new_pkg = src.root_package()?;
 		(src, new_pkg)
 	};
 
-	let pkg_fingerprint = src.last_modified_file(&new_pkg)?;
-	let ws = Workspace::ephemeral(new_pkg, config, None, true)?;
+	let pkg_fingerprint = src.fingerprint(&new_pkg)?;
+	let ws = Workspace::ephemeral(new_pkg, gctx, None, true)?;
 
 	let rustc_args =
 		if pkg.manifest().unstable_features().require(Feature::public_dependency()).is_ok() {
@@ -157,7 +158,7 @@ pub(crate) fn run_check_ephemeral<'a>(
 		&ws,
 		&ops::CompileOptions {
 			build_config: BuildConfig::new(
-				config,
+				gctx,
 				opts.jobs.clone(),
 				false,
 				&opts.targets,
@@ -169,21 +170,20 @@ pub(crate) fn run_check_ephemeral<'a>(
 			target_rustdoc_args: None,
 			target_rustc_args: rustc_args,
 			rustdoc_document_private_items: false,
-			honor_rust_version: false,
+			honor_rust_version: None,
 			target_rustc_crate_types: None,
 		},
 	)?;
 
 	// Check that `build.rs` didn't modify any files in the `src` directory.
-	let ws_fingerprint = src.last_modified_file(ws.current()?)?;
+	let ws_fingerprint = src.fingerprint(ws.current()?)?;
 	if pkg_fingerprint != ws_fingerprint {
-		let (_, path) = ws_fingerprint;
 		anyhow::bail!(
 			"Source directory was modified by build.rs during cargo publish. \
              Build scripts should not modify anything outside of OUT_DIR.\n\
-             {:?}\n\n\
+             {path:?}\n\n\
              To proceed despite this, pass the `--no-verify` flag.",
-			path
+			path = ws_fingerprint
 		);
 	}
 
@@ -252,17 +252,16 @@ fn check_readme(_ws: &Workspace<'_>, _pkg: &Package) -> Result<(), anyhow::Error
 }
 
 pub fn check_packages(
+	gctx: &GlobalContext,
 	packages: &[Package],
 	ws: &Workspace<'_>,
 	build: bool,
 	check_readme: bool,
 ) -> Result<(), anyhow::Error> {
-	let c = ws.config();
-
 	// FIXME: make build config configurable
 	//        https://github.com/paritytech/cargo-unleash/issues/20
 	let opts = PackageOpts {
-		config: c,
+		gctx,
 		verify: false,
 		check_metadata: true,
 		list: false,
@@ -278,7 +277,7 @@ pub fn check_packages(
 		keep_going: false,
 	};
 
-	c.shell().status("Checking", "Metadata & Dependencies")?;
+	gctx.shell().status("Checking", "Metadata & Dependencies")?;
 
 	let errors = packages.iter().fold(Vec::new(), |mut res, pkg| {
 		if let Err(e) = check_metadata(pkg) {
@@ -296,7 +295,7 @@ pub fn check_packages(
 	}
 
 	if check_readme {
-		c.shell().status("Checking", "Readme files")?;
+		gctx.shell().status("Checking", "Readme files")?;
 		let errors = packages.iter().fold(Vec::new(), |mut res, pkg| {
 			if let Err(e) = self::check_readme(ws, pkg) {
 				res.push(format!("{:}: Checking Readme file failed with: {:}", pkg.name(), e));
@@ -313,18 +312,16 @@ pub fn check_packages(
 	let builds = packages.iter().map(|pkg| {
 		check_metadata(pkg)?;
 
-		let pkg_ws = Workspace::ephemeral(pkg.clone(), c, Some(ws.target_dir()), true)?;
-		c.shell().status("Packing", pkg)?;
+		let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
+		gctx.shell().status("Packing", pkg)?;
 		match package(&pkg_ws, &opts) {
-			Ok(Some(mut rw_lock)) if rw_lock.len() == 1 => {
-				Ok((pkg_ws, rw_lock.pop().expect("we checked the counter")))
-			},
-			Ok(Some(_rw_lock)) => {
-				Err(anyhow::anyhow!("Packing {:} produced more than one package", pkg.name()))
-			},
+			Ok(Some(mut rw_lock)) if rw_lock.len() == 1 =>
+				Ok((pkg_ws, rw_lock.pop().expect("we checked the counter"))),
+			Ok(Some(_rw_lock)) =>
+				Err(anyhow::anyhow!("Packing {:} produced more than one package", pkg.name())),
 			Ok(None) => Err(anyhow::anyhow!("Failure packing {:}", pkg.name())),
 			Err(e) => {
-				cargo::display_error(&e, &mut c.shell());
+				cargo::display_error(&e, &mut gctx.shell());
 				Err(anyhow::anyhow!("Failure packing {:}: {}", pkg.name(), e))
 			},
 		}
@@ -341,7 +338,7 @@ pub fn check_packages(
 
 	let build_mode = if build { CompileMode::Build } else { CompileMode::Check { test: false } };
 
-	c.shell().status("Checking", "Packages")?;
+	gctx.shell().status("Checking", "Packages")?;
 
 	// Let's keep a reference to the already build packages and their unpacked
 	// location, so they can be injected as dependencies to the packages build
@@ -351,9 +348,10 @@ pub fn check_packages(
 	let mut replaces = HashMap::new();
 
 	for (pkg_ws, rw_lock) in successes.iter().filter_map(|e| e.as_ref().ok()) {
-		c.shell()
+		gctx.shell()
 			.status("Verfying", pkg_ws.current().expect("We've build localised workspaces. qed"))?;
 		let ws = run_check_ephemeral(
+			gctx,
 			pkg_ws,
 			pkg_ws.current().unwrap(),
 			rw_lock,
