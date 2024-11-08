@@ -6,7 +6,7 @@ authors = [
   "Bernhard Schuster <bernhard@ahoi.io>",
 ]
 edition = "2021"
-rust-version = "1.79.0"
+rust-version = "1.80.0"
 license = "GPL-3.0"
 repository = "https://github.com/drahnr/cargo-dragons"
 description = "Tooling to manage releasing of crates in massiv workspaces/monorepos"
