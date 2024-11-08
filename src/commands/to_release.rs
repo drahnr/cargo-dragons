@@ -64,6 +64,8 @@ where
 	F: Fn(&Package) -> bool,
 	D: Into<Option<PathBuf>>,
 {
+	let lock = gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::Shared)?;
+
 	// inspired by the work of `cargo-publish-all`: https://gitlab.com/torkleyy/cargo-publish-all
 	gctx.shell()
 		.status("Resolving", "Dependency Tree")
@@ -89,7 +91,6 @@ where
 		gctx,
 	)
 	.expect("Failed getting remote registry");
-	let lock = gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::Shared)?;
 
 	registry.invalidate_cache();
 
