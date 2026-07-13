@@ -1,12 +1,12 @@
 use assert_cmd::prelude::*;
 use assert_fs::prelude::*;
-use cargo::{core::SourceId, ops::read_package, util::config::Config as CargoConfig};
+use cargo::{GlobalContext, core::SourceId, ops::read_package};
 use semver::Version;
 use std::process::Command;
 
 #[test]
 fn set_pre() -> Result<(), Box<dyn std::error::Error>> {
-	let cfg = CargoConfig::default()?;
+	let gctx = GlobalContext::default()?;
 	let temp = assert_fs::TempDir::new()?;
 	temp.copy_from("tests/fixtures/simple-base", &["*.toml", "*.rs"])?;
 
@@ -24,9 +24,9 @@ fn set_pre() -> Result<(), Box<dyn std::error::Error>> {
 	let temp_path = temp.path().to_path_buf();
 	let source = SourceId::for_path(temp.path())?;
 
-	let (crate_a, _) = read_package(&temp_path.join("crateA").join("Cargo.toml"), source, &cfg)?;
-	let (crate_b, _) = read_package(&temp_path.join("crateB").join("Cargo.toml"), source, &cfg)?;
-	let (crate_c, _) = read_package(&temp_path.join("crateC").join("Cargo.toml"), source, &cfg)?;
+	let crate_a = read_package(&temp_path.join("crateA").join("Cargo.toml"), source, &gctx)?;
+	let crate_b = read_package(&temp_path.join("crateB").join("Cargo.toml"), source, &gctx)?;
+	let crate_c = read_package(&temp_path.join("crateC").join("Cargo.toml"), source, &gctx)?;
 	assert_eq!(crate_a.version(), &Version::parse("0.1.0-dev")?);
 	assert_eq!(crate_b.version(), &Version::parse("2.0.0-dev")?);
 	assert_eq!(crate_c.version(), &Version::parse("3.1.0")?); // wasn't selected
@@ -37,7 +37,7 @@ fn set_pre() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn bump_to_dev() -> Result<(), Box<dyn std::error::Error>> {
-	let cfg = CargoConfig::default()?;
+	let gctx = GlobalContext::default()?;
 	let temp = assert_fs::TempDir::new()?;
 	temp.copy_from("tests/fixtures/simple-base", &["*.toml", "*.rs"])?;
 
@@ -54,9 +54,9 @@ fn bump_to_dev() -> Result<(), Box<dyn std::error::Error>> {
 	let temp_path = temp.path().to_path_buf();
 	let source = SourceId::for_path(temp.path())?;
 
-	let (crate_a, _) = read_package(&temp_path.join("crateA").join("Cargo.toml"), source, &cfg)?;
-	let (crate_b, _) = read_package(&temp_path.join("crateB").join("Cargo.toml"), source, &cfg)?;
-	let (crate_c, _) = read_package(&temp_path.join("crateC").join("Cargo.toml"), source, &cfg)?;
+	let crate_a = read_package(&temp_path.join("crateA").join("Cargo.toml"), source, &gctx)?;
+	let crate_b = read_package(&temp_path.join("crateB").join("Cargo.toml"), source, &gctx)?;
+	let crate_c = read_package(&temp_path.join("crateC").join("Cargo.toml"), source, &gctx)?;
 	assert_eq!(crate_a.version(), &Version::parse("0.2.0-dev")?);
 	assert_eq!(crate_b.version(), &Version::parse("3.0.0-dev")?);
 	assert_eq!(crate_c.version(), &Version::parse("4.0.0-dev")?);

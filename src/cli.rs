@@ -1,10 +1,10 @@
 use anyhow::Context;
 use cargo::{
-	core::{package::Package, resolver::CliFeatures, Shell, Verbosity, Workspace},
-	util::command_prelude::CompileMode,
 	GlobalContext,
+	core::{Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
 };
 use cargo_credential::Secret;
+use cargo_util_terminal::{Shell, Verbosity};
 use regex::Regex;
 use semver::Version;
 use std::{fs, path::PathBuf, str::FromStr};
@@ -459,7 +459,9 @@ fn verify_readme_feature() -> anyhow::Result<()> {
 	if cfg!(feature = "gen-readme") {
 		Ok(())
 	} else {
-		anyhow::bail!("Readme related functionalities not available. Please re-install with gen-readme feature.")
+		anyhow::bail!(
+			"Readme related functionalities not available. Please re-install with gen-readme feature."
+		)
 	}
 }
 
@@ -477,8 +479,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 
 	let get_token = |t: Option<Secret<String>>| -> Result<Option<Secret<String>>, anyhow::Error> {
 		Ok(match t {
-			None => gctx
-				.get::<Option<Secret<String>>>("registry.token")?,
+			None => gctx.get::<Option<Secret<String>>>("registry.token")?,
 			_ => t,
 		})
 	};
@@ -621,7 +622,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 			let ws = maybe_patch(ws, false, &predicate)?;
 
-			let packages = commands::packages_to_release(&ws, predicate, None)?;
+			let packages = commands::packages_to_release(&gctx, &ws, predicate, None)?;
 			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
 
 			commands::gen_all_readme(&gctx, packages, &ws, readme_mode)
@@ -673,7 +674,9 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 				verify: false,
 				check_metadata: false,
 				list: false,
+				fmt: cargo::ops::PackageMessageFormat::Human,
 				allow_dirty: true,
+				include_lockfile: true,
 				jobs: None,
 				to_package: cargo::ops::Packages::Default,
 				targets: Default::default(),
@@ -683,6 +686,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 					uses_default_features: true,
 				},
 				keep_going: !failfast,
+				reg_or_index: None,
+				dry_run: false,
 			};
 
 			commands::independence_check(&gctx, packages, &opts, ws, modes, context)

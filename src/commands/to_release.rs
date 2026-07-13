@@ -1,19 +1,18 @@
 use crate::util::members_deep;
 use cargo::{
-	core::{package::Package, Dependency, SourceId, Workspace},
-	sources::{
-		registry::RegistrySource,
-		source::{QueryKind, Source},
-	},
-	util::interning::InternedString,
 	GlobalContext,
+	core::{SourceId, Workspace, package::Package},
+	sources::{registry::RegistrySource, source::Source},
+	util::interning::InternedString,
 };
+#[cfg(not(test))]
+use cargo::{core::Dependency, sources::source::QueryKind};
 use log::{trace, warn};
 use petgraph::{
+	Directed, Graph,
 	dot::{self, Dot},
 	graph::{EdgeReference, NodeIndex},
 	visit::EdgeRef,
-	Directed, Graph,
 };
 use std::{
 	collections::{HashMap, HashSet},
@@ -46,6 +45,7 @@ where
 type DependencyCycle = Vec<Package>;
 
 /// Error with additional cycle annotations.
+#[derive(Debug)]
 struct ErrorWithCycles(Vec<DependencyCycle>, anyhow::Error);
 
 impl<T: Into<anyhow::Error>> From<T> for ErrorWithCycles {
@@ -64,7 +64,8 @@ where
 	F: Fn(&Package) -> bool,
 	D: Into<Option<PathBuf>>,
 {
-	let lock = gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::MutateExclusive)?;
+	let lock =
+		gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::MutateExclusive)?;
 
 	// inspired by the work of `cargo-publish-all`: https://gitlab.com/torkleyy/cargo-publish-all
 	gctx.shell()
@@ -83,7 +84,7 @@ where
 		.expect("Writing to Shell doesn't fail");
 
 	let mut already_published = HashSet::new();
-	let mut registry = RegistrySource::remote(
+	let registry = RegistrySource::remote(
 		SourceId::crates_io(gctx).expect(
 			"Your main registry (usually crates.io) can't be read. Please check your .cargo/config",
 		),
@@ -95,14 +96,9 @@ where
 	registry.invalidate_cache();
 
 	for m in members.iter() {
-		let dep = Dependency::parse(m.name(), Some(&m.version().to_string()), registry.source_id())
-			.expect("Parsing our dependency doesn't fail");
-
-		let _ = registry
-			.query(&dep, QueryKind::Exact, &mut |_| {
-				already_published.insert(m.name());
-			})
-			.map(|e| e.expect("Quering the local registry doesn't fail"));
+		if is_published_to_registry(&registry, m) {
+			already_published.insert(m.name());
+		}
 	}
 
 	// drop the global package lock
@@ -192,6 +188,32 @@ where
 	Ok(packages)
 }
 
+#[cfg(not(test))]
+fn is_published_to_registry(registry: &RegistrySource<'_>, package: &Package) -> bool {
+	if std::env::var_os("CARGO_NET_OFFLINE").is_some() {
+		return false;
+	}
+
+	let dep = Dependency::parse(
+		package.name(),
+		Some(&package.version().to_string()),
+		registry.source_id(),
+	)
+	.expect("Parsing our dependency doesn't fail");
+
+	let mut found = false;
+	futures::executor::block_on(registry.query(&dep, QueryKind::Exact, &mut |_| {
+		found = true;
+	}))
+	.expect("Querying the local registry doesn't fail");
+	found
+}
+
+#[cfg(test)]
+fn is_published_to_registry(_registry: &RegistrySource<'_>, _package: &Package) -> bool {
+	false
+}
+
 /// Render a graphviz (aka dot graph) to a file.
 fn graphviz<'i, I: IntoIterator<Item = &'i Vec<NodeIndex>>, W: Write>(
 	graph: &Graph<Package, (), Directed, u32>,
@@ -226,90 +248,17 @@ fn graphviz<'i, I: IntoIterator<Item = &'i Vec<NodeIndex>>, W: Write>(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use cargo::{
-		core::{manifest::Manifest, *},
-		util::toml::TomlManifest,
-		Config,
-	};
-
 	use anyhow::Result;
+	use cargo::GlobalContext;
 	use itertools::Itertools;
 	use semver::Version;
-	use std::path::Path;
-
-	/// Test helper to create a `struct Manifest`
-	/// that is only living in memory, but could be written to disk.
-	fn make_manifest(
-		config: &Config,
-		base: &std::path::Path,
-		name: &'static str,
-		version: Version,
-		source_id: SourceId,
-		dependencies: impl AsRef<[Dependency]>,
-	) -> Manifest {
-		let toml_manifest = format!(
-			r###"
-[package]
-name = "{name}"
-version = "{version}"
-edition = "2021"
-description = "{name}"
-publish = false
-
-[dependencies]
-"###,
-			name = name,
-			version = version
-		);
-
-		let toml_manifest =
-			dependencies.as_ref().iter().fold(toml_manifest, |toml_manifest, dep| {
-				toml_manifest +
-					format!(
-						r###"
-{name} = "{version}""###,
-						name = dep.package_name(),
-						version = dep.version_req()
-					)
-					.as_str()
-			});
-
-		let toml_manifest = toml_manifest.as_str();
-		let toml_manifest: TomlManifest = toml::from_str(toml_manifest).unwrap();
-		let (manifest, _paths) = TomlManifest::to_real_manifest(
-			&std::rc::Rc::new(toml_manifest),
-			false,
-			source_id,
-			base,
-			config,
-		)
-		.unwrap();
-
-		manifest
-	}
-
-	#[test]
-	fn mock_make_manifest_works() {
-		let cfg = Config::default().unwrap();
-		let dir =
-			tempdir::TempDir::new("mock_make_manifest_works").expect("Creating temp dir works");
-		let _ = dbg!(make_manifest(
-			&cfg,
-			dir.path(),
-			"dinodinodino",
-			Version::parse("1.2.3").unwrap(),
-			SourceId::crates_io(&cfg).unwrap(),
-			&[],
-		));
-	}
-
-	use cargo::core::VirtualManifest;
+	use std::{fs, path::Path};
 
 	#[derive(Default, Debug, Clone)]
 	struct Krate {
 		name: &'static str,
 		version: Option<Version>,
-		dependencies: Vec<Dependency>,
+		dependencies: Vec<(&'static str, &'static str)>,
 	}
 
 	impl Krate {
@@ -323,12 +272,7 @@ publish = false
 			dependency: &'static str,
 			version_req: &'static str,
 		) -> Result<&mut Self> {
-			// TODO make this pretty
-			let config = Config::default().unwrap();
-			let source_id = SourceId::crates_io(&config)?;
-
-			let dependency = Dependency::parse(dependency, version_req.into(), source_id)?;
-			self.dependencies.push(dependency);
+			self.dependencies.push((dependency, version_req));
 			Ok(self)
 		}
 	}
@@ -345,131 +289,69 @@ publish = false
 			self.krates.last_mut().unwrap()
 		}
 
-		pub fn build(self, base: impl AsRef<Path>) -> Result<Workspace<'static>> {
-			let config = {
-				let config = Config::default().unwrap();
-				Box::leak(Box::new(config))
-			};
+		pub fn build(
+			self,
+			base: impl AsRef<Path>,
+		) -> Result<(&'static GlobalContext, Workspace<'static>)> {
 			let base = base.as_ref();
+			fs::create_dir_all(base)?;
 
-			let source_id = SourceId::crates_io(&*config).unwrap();
-
-			let manifests = self
-				.krates
-				.iter()
-				.map(|Krate { name, version, dependencies }| {
-					Ok(make_manifest(
-						config,
-						base,
-						name,
-						version.clone().expect("Must have version. qed"),
-						source_id,
-						dependencies,
-					))
-				})
-				.collect::<Result<Vec<Manifest>>>()?;
-
-			let root_config = WorkspaceRootConfig::new(
-				base,
-				&Some(
-					manifests.iter().map(|manifest| manifest.name().as_str().to_owned()).collect(),
+			let members = self.krates.iter().map(|krate| format!(r#""{}""#, krate.name)).join(", ");
+			fs::write(
+				base.join("Cargo.toml"),
+				format!(
+					r#"
+[workspace]
+resolver = "3"
+members = [{members}]
+"#
 				),
-				&None,
-				&Some(Vec::new()),
-				&None,
-				&None,
-			);
+			)?;
 
-			let vconfig = WorkspaceConfig::Root(root_config);
+			for krate in self.krates.iter() {
+				let crate_dir = base.join(krate.name);
+				fs::create_dir_all(crate_dir.join("src"))?;
+				let dependencies = krate
+					.dependencies
+					.iter()
+					.map(|(name, version)| {
+						format!("{name} = {{ version = \"{version}\", path = \"../{name}\" }}")
+					})
+					.join("\n");
+				fs::write(
+					crate_dir.join("Cargo.toml"),
+					format!(
+						r#"
+[package]
+name = "{name}"
+version = "{version}"
+edition = "2024"
+description = "{name}"
+publish = false
 
-			// crate the filesystem tree
-			{
-				std::fs::create_dir_all(base).unwrap();
-				let content = format!(
-					r###"
-    [workspace]
-    members = [
-        {}
-    ]
-    "###,
-					String::from_iter(Itertools::intersperse(
-						manifests
-							.iter()
-							.map(|manifest| format!(r#""./{}""#, manifest.name().as_str())),
-						", ".to_owned()
-					))
-				);
-				std::fs::write(base.join("Cargo.toml"), content.as_bytes()).unwrap();
-				for manifest in manifests.iter() {
-					let name = manifest.name().as_str();
-					let manifest_path = base.join(name);
-					std::fs::create_dir_all(manifest_path.join("src")).unwrap();
-					std::fs::write(
-						manifest_path.join("Cargo.toml"),
-						toml::to_string(manifest.original()).unwrap().as_str().as_bytes(),
-					)
-					.unwrap();
-					std::fs::write(
-						manifest_path.join("src").join("lib.rs"),
-						format!(
-							r###"pub fn {name}() {{
-                        println!("{name}")
-                    }}
-    "###,
-							name = name
-						)
-						.as_bytes(),
-					)
-					.unwrap();
-				}
+[dependencies]
+{dependencies}
+"#,
+						name = krate.name,
+						version = krate.version.clone().expect("Must have version. qed"),
+					),
+				)?;
+				fs::write(
+					crate_dir.join("src/lib.rs"),
+					format!("pub fn {}() {{}}\n", krate.name.replace('-', "_")),
+				)?;
 			}
 
-			let vmanifest = VirtualManifest::new(
-				Vec::new(),
-				HashMap::default(),
-				vconfig,
-				None,
-				Features::default(),
-				None,
-			);
-
-			let ws = Workspace::new_virtual(
-				base.to_path_buf(),
-				base.join("Cargo.toml"),
-				vmanifest,
-				&*config,
-			)?;
-			Ok(ws)
+			let gctx = Box::leak(Box::new(GlobalContext::default()?));
+			let ws = Workspace::new(&base.join("Cargo.toml"), gctx)?;
+			Ok((gctx, ws))
 		}
 	}
 
-	/// Setup the following directory structure
-	/// ```
-	/// $OUT_DIR/integration
-	/// ├── Cargo.toml
-	/// ├── closing
-	/// │   ├── Cargo.toml
-	/// │   └── src
-	/// │       └── lib.rs
-	/// ├── dx
-	/// │   ├── Cargo.toml
-	/// │   └── src
-	/// │       └── lib.rs
-	/// ├── dy
-	/// │   ├── Cargo.toml
-	/// │   └── src
-	/// │       └── lib.rs
-	/// └── top
-	///     ├── Cargo.toml
-	///     └── src
-	///         └── lib.rs
-	/// ```
-	///
-	/// with the `Cargo.toml` in the `base` directory,
-	/// containing only a `workspace` declaration.
+	/// Setup a diamond dependency graph and verify release order.
 	#[test]
 	fn diamond() -> Result<()> {
-		let tmp = tempdir::TempDir::new("diamond").expect("Can create temp dir");
+		let tmp = tempfile::tempdir()?;
 
 		let mut wsb = WorkspaceBuilder::default();
 		wsb.add_crate("top")
@@ -480,11 +362,12 @@ publish = false
 		wsb.add_crate("dy").version(15, 100, 0).add_dependency("closing", "1.6.1")?;
 		wsb.add_crate("closing").version(1, 6, 9);
 
-		let ws = wsb.build(&tmp)?;
-		let to_release = packages_to_release(&ws, |_pkg| true, tmp.path().join("diamond.dot"))
-			.expect("There are no cycles in a diamond shaped, directed, dependency graph. qed");
+		let (gctx, ws) = wsb.build(tmp.path())?;
+		let to_release =
+			packages_to_release(gctx, &ws, |_pkg| true, tmp.path().join("diamond.dot"))
+				.expect("There are no cycles in a diamond shaped, directed, dependency graph. qed");
 		// must be in release order, so the leaf has to have a lower index, dependencies on the same
-		// level are ordered by there reverse appearance in the members declaration
+		// level are ordered by their reverse appearance in the members declaration
 		assert_eq!(
 			vec!["closing", "dy", "dx", "top"],
 			to_release.iter().map(|pkg| pkg.name().as_str()).collect::<Vec<_>>()
@@ -494,16 +377,16 @@ publish = false
 
 	#[test]
 	fn circular() -> Result<()> {
-		let tmp = tempdir::TempDir::new("circular").expect("Can create temp dir");
+		let tmp = tempfile::tempdir()?;
 
 		let mut wsb = WorkspaceBuilder::default();
 		wsb.add_crate("a").version(3, 0, 0).add_dependency("b", "*")?;
 		wsb.add_crate("b").version(2, 0, 0).add_dependency("c", "*")?;
 		wsb.add_crate("c").version(1, 0, 0).add_dependency("a", "*")?;
 
-		let ws = wsb.build(&tmp)?;
+		let (gctx, ws) = wsb.build(tmp.path())?;
 		let ErrorWithCycles(cycles, _err) =
-			packages_to_release_inner(&ws, |_pkg| true, tmp.path().join("circular.dot"))
+			packages_to_release_inner(gctx, &ws, |_pkg| true, tmp.path().join("circular.dot"))
 				.unwrap_err();
 		assert_eq!(cycles.len(), 1);
 		assert_eq!(cycles[0].len(), 3);

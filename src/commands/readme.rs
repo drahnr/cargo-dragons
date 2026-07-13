@@ -1,6 +1,9 @@
 use crate::{cli::GenerateReadmeMode, commands};
-use anyhow::{anyhow, bail, Context, Result};
-use cargo::core::{Manifest, Package, Workspace};
+use anyhow::{Context, Result, anyhow, bail};
+use cargo::{
+	GlobalContext,
+	core::{Manifest, Package, Workspace},
+};
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use sha1::{Digest as _, Sha1};
@@ -46,6 +49,7 @@ impl Display for CheckReadmeResult {
 }
 
 pub fn check_pkg_readme<'a>(
+	gctx: &GlobalContext,
 	ws: &Workspace<'a>,
 	pkg_path: &Path,
 	pkg_manifest: &Manifest,
@@ -236,8 +240,9 @@ fn rewrite_matched_doc_link(caps: &Captures, pkg_name: &str, doc_uri: Option<&st
 		// Skip absolute links
 		Some(url) if url.as_str().starts_with("http") => caps[0].to_string(),
 		// Handle relative links to sibling crate
-		Some(url) if url.as_str().starts_with("../") =>
-			make_sibling_doc_link(caps.name("text").unwrap().as_str(), &url.as_str()[3..], doc_uri),
+		Some(url) if url.as_str().starts_with("../") => {
+			make_sibling_doc_link(caps.name("text").unwrap().as_str(), &url.as_str()[3..], doc_uri)
+		},
 		// Handle relative links to current crate
 		Some(url) => make_relative_doc_link(
 			caps.name("text").unwrap().as_str(),

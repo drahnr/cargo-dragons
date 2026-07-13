@@ -1,8 +1,8 @@
 use anyhow::Context;
 use cargo::{
-	core::{package::Package, Workspace},
-	sources::PathSource,
 	GlobalContext,
+	core::{Workspace, package::Package},
+	sources::PathSource,
 };
 use git2::Repository;
 use log::{trace, warn};
@@ -152,11 +152,7 @@ where
 		let k = case.key();
 		if let Some(Item::Table(t)) = root.get_mut(k) {
 			let keys = Vec::from_iter(t.iter().filter_map(|(key, v)| {
-				if v.is_table() || v.is_inline_table() {
-					Some(key.to_owned())
-				} else {
-					None
-				}
+				if v.is_table() || v.is_inline_table() { Some(key.to_owned()) } else { None }
 			}));
 			for key in keys {
 				let (name, action) = match t.get_mut(&key) {
@@ -190,7 +186,11 @@ where
 					},
 					None => continue,
 					info => {
-						warn!("Unsupported dependency format for {}. Format must be InlinedTable/Table, not {}", key, get_type_of(&info));
+						warn!(
+							"Unsupported dependency format for {}. Format must be InlinedTable/Table, not {}",
+							key,
+							get_type_of(&info)
+						);
 						(key.clone(), DependencyAction::Untouched)
 					},
 				};
@@ -278,7 +278,7 @@ pub(crate) fn make_pkg_predicate(
 	gctx: &GlobalContext,
 	ws: &Workspace<'_>,
 	args: PackageSelectOptions,
-) -> Result<impl Fn(&Package) -> bool, anyhow::Error> {
+) -> Result<impl Fn(&Package) -> bool + 'static, anyhow::Error> {
 	let PackageSelectOptions {
 		packages,
 		skip,
@@ -291,8 +291,8 @@ pub(crate) fn make_pkg_predicate(
 	if !packages.is_empty() {
 		if !skip.is_empty() || !ignore_pre_version.is_empty() {
 			anyhow::bail!(
-                "-p/--packages is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
-            );
+				"-p/--packages is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
+			);
 		}
 		if changed_since.is_some() {
 			anyhow::bail!("-p/--packages is mutually exclusive to using -c/--changed-since");
@@ -312,10 +312,10 @@ pub(crate) fn make_pkg_predicate(
 	let changed = if let Some(changed_since) = &changed_since {
 		if !skip.is_empty() || !ignore_pre_version.is_empty() {
 			anyhow::bail!(
-                "-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
-            );
+				"-c/--changed-since is mutually exclusive to using -s/--skip and -i/--ignore-version-pre"
+			);
 		}
-		Some(crate::util::changed_packages(&gctx, ws, changed_since)?)
+		Some(crate::util::changed_packages(gctx, ws, changed_since)?)
 	} else {
 		None
 	};
@@ -343,8 +343,8 @@ pub(crate) fn make_pkg_predicate(
 			if skip.iter().any(|r| r.is_match(&name)) {
 				return false;
 			}
-			if !p.version().pre.is_empty() &&
-				ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
+			if !p.version().pre.is_empty()
+				&& ignore_pre_version.contains(&p.version().pre.as_str().to_owned())
 			{
 				return false;
 			}

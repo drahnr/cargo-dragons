@@ -1,19 +1,19 @@
 #[cfg(feature = "gen-readme")]
 use crate::commands::readme;
 
-use crate::util::{edit_each_dep, DependencyAction, DependencyEntry};
+use crate::util::{DependencyAction, DependencyEntry, edit_each_dep};
 use anyhow::Context;
 use cargo::{
+	GlobalContext,
 	core::{
-		compiler::{BuildConfig, CompileMode},
+		Feature, SourceId, Workspace,
+		compiler::{BuildConfig, CompileMode, UserIntent},
 		package::Package,
 		resolver::features::CliFeatures,
-		Feature, SourceId, Workspace,
 	},
-	ops::{self, package, PackageOpts},
-	sources::{source::Source, PathSource},
+	ops::{self, PackageOpts, package},
+	sources::{PathSource, source::Source},
 	util::{FileLock, OptVersionReq},
-	GlobalContext,
 };
 use flate2::read::GzDecoder;
 use log::error;
@@ -23,6 +23,15 @@ use std::{
 };
 use tar::Archive;
 use toml_edit::{DocumentMut, Item, Value};
+
+fn user_intent(build_mode: CompileMode) -> anyhow::Result<UserIntent> {
+	match build_mode {
+		CompileMode::Build => Ok(UserIntent::Build),
+		CompileMode::Test => Ok(UserIntent::Test),
+		CompileMode::Check { test } => Ok(UserIntent::Check { test }),
+		mode => anyhow::bail!("Unsupported compile mode: {mode:?}"),
+	}
+}
 
 fn inject_replacement(
 	pkg: &Package,
@@ -87,7 +96,7 @@ pub(crate) fn run_check_inplace<'a>(
 				opts.jobs.clone(),
 				false,
 				&opts.targets,
-				build_mode,
+				user_intent(build_mode)?,
 			)?,
 			spec: ops::Packages::Packages(vec![explicit]),
 			cli_features: CliFeatures::from_command_line(features, false, true)?,
@@ -105,7 +114,7 @@ pub(crate) fn run_check_inplace<'a>(
 
 pub(crate) fn run_check_ephemeral<'a>(
 	gctx: &'a GlobalContext,
-	ws: &Workspace<'a>,
+	_ws: &Workspace<'a>,
 	package: &Package,
 	tar: &FileLock,
 	opts: &PackageOpts<'_>,
@@ -113,7 +122,7 @@ pub(crate) fn run_check_ephemeral<'a>(
 	replace: &HashMap<String, String>,
 	features: &[String],
 ) -> anyhow::Result<Workspace<'a>> {
-	let pkg = ws.current()?;
+	let pkg = package;
 
 	let f = GzDecoder::new(tar.file());
 	let dst = tar.parent().join(format!("{}-{}", pkg.name(), pkg.version()));
@@ -162,7 +171,7 @@ pub(crate) fn run_check_ephemeral<'a>(
 				opts.jobs.clone(),
 				false,
 				&opts.targets,
-				build_mode,
+				user_intent(build_mode)?,
 			)?,
 			spec: ops::Packages::Packages(vec![package.name().to_string()]),
 			cli_features: CliFeatures::from_command_line(features, false, false)?,
@@ -241,13 +250,21 @@ fn check_metadata(package: &Package) -> Result<(), anyhow::Error> {
 }
 
 #[cfg(feature = "gen-readme")]
-fn check_readme<'a>(ws: &Workspace<'a>, pkg: &Package) -> Result<(), anyhow::Error> {
+fn check_readme<'a>(
+	gctx: &GlobalContext,
+	ws: &Workspace<'a>,
+	pkg: &Package,
+) -> Result<(), anyhow::Error> {
 	let pkg_path = pkg.manifest_path().parent().expect("Folder exists");
-	readme::check_pkg_readme(ws, pkg_path, pkg.manifest())
+	readme::check_pkg_readme(gctx, ws, pkg_path, pkg.manifest())
 }
 
 #[cfg(not(feature = "gen-readme"))]
-fn check_readme(_ws: &Workspace<'_>, _pkg: &Package) -> Result<(), anyhow::Error> {
+fn check_readme(
+	_gctx: &GlobalContext,
+	_ws: &Workspace<'_>,
+	_pkg: &Package,
+) -> Result<(), anyhow::Error> {
 	unreachable!()
 }
 
@@ -265,7 +282,9 @@ pub fn check_packages(
 		verify: false,
 		check_metadata: true,
 		list: false,
+		fmt: ops::PackageMessageFormat::Human,
 		allow_dirty: true,
+		include_lockfile: true,
 		jobs: None,
 		to_package: ops::Packages::Default,
 		targets: Default::default(),
@@ -275,6 +294,8 @@ pub fn check_packages(
 			uses_default_features: true,
 		},
 		keep_going: false,
+		reg_or_index: None,
+		dry_run: true,
 	};
 
 	gctx.shell().status("Checking", "Metadata & Dependencies")?;
@@ -297,7 +318,7 @@ pub fn check_packages(
 	if check_readme {
 		gctx.shell().status("Checking", "Readme files")?;
 		let errors = packages.iter().fold(Vec::new(), |mut res, pkg| {
-			if let Err(e) = self::check_readme(ws, pkg) {
+			if let Err(e) = self::check_readme(gctx, ws, pkg) {
 				res.push(format!("{:}: Checking Readme file failed with: {:}", pkg.name(), e));
 			}
 			res
@@ -315,11 +336,13 @@ pub fn check_packages(
 		let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
 		gctx.shell().status("Packing", pkg)?;
 		match package(&pkg_ws, &opts) {
-			Ok(Some(mut rw_lock)) if rw_lock.len() == 1 =>
-				Ok((pkg_ws, rw_lock.pop().expect("we checked the counter"))),
-			Ok(Some(_rw_lock)) =>
-				Err(anyhow::anyhow!("Packing {:} produced more than one package", pkg.name())),
-			Ok(None) => Err(anyhow::anyhow!("Failure packing {:}", pkg.name())),
+			Ok(mut rw_locks) if rw_locks.len() == 1 =>
+				Ok((pkg_ws, rw_locks.pop().expect("we checked the count"))),
+			Ok(rw_locks) => Err(anyhow::anyhow!(
+				"Packing {} produced {} packages, expected one",
+				pkg.name(),
+				rw_locks.len()
+			)),
 			Err(e) => {
 				cargo::display_error(&e, &mut gctx.shell());
 				Err(anyhow::anyhow!("Failure packing {:}: {}", pkg.name(), e))

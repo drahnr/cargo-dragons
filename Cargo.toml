@@ -5,8 +5,8 @@ authors = [
   "Benjamin Kampmann <ben@gnunicorn.org>",
   "Bernhard Schuster <bernhard@ahoi.io>",
 ]
-edition = "2021"
-rust-version = "1.80.0"
+edition = "2024"
+rust-version = "1.95"
 license = "GPL-3.0"
 repository = "https://github.com/drahnr/cargo-dragons"
 description = "Tooling to manage releasing of crates in massiv workspaces/monorepos"
@@ -25,39 +25,40 @@ default = []
 gen-readme = ["dep:cargo-readme", "dep:lazy_static", "dep:sha1"]
 
 [dependencies]
-clap = { version = "4", features = ["derive", "env"] }
-clap_complete = "4"
-clap-verbosity-flag = "2"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+clap_complete = "4.6.7"
+clap-verbosity-flag = "3.0.4"
 
-toml_edit = "0.22"
-log = "0.4"
-pretty_env_logger = "0.5"
-petgraph = "0.6"
-regex = "1.4"
-anyhow = "1"
-itertools = "0.13"
+toml_edit = "0.25.12"
+toml = { version = "1.1.2", features = ["preserve_order"] }
+log = "0.4.33"
+pretty_env_logger = "0.5.0"
+petgraph = "0.8.3"
+regex = "1.13.0"
+anyhow = "1.0.103"
+itertools = "0.15.0"
+dirs = "6.0.0"
 
-# CARGO VERSION BOUND dependencies
-cargo = { version = "0.98", features = [ ]}
-cargo-credential = "0.4"
-flate2 = "1"
-git2 = "0.21"
-semver = "1.0"
-tar = "0.4"
-termcolor = "1.2"
+# Cargo implementation APIs: update and pin these as a unit.
+cargo = { version = "=0.98.0", features = [] }
+cargo-credential = "=0.4.10"
+cargo-util-schemas = "=0.14.1"
+cargo-util-terminal = "=0.1.0"
+futures = "0.3.32"
+
+flate2 = "1.1.9"
+git2 = "0.21.0"
+semver = "1.0.28"
+tar = "0.4.46"
 
 # Optional dependencies
-cargo-readme = { version = "3.2", optional = true }
-lazy_static = { version = "1.4", optional = true }
-sha1 = { version = "0.10", optional = true }
-dirs = "5.0.1"
-toml = { version = "0.8", features = ["indexmap"] }
-cargo-util-schemas = "0.5.0"
+cargo-readme = { version = "3.3.2", optional = true }
+lazy_static = { version = "1.5.0", optional = true }
+sha1 = { version = "0.11.0", optional = true }
 
 [dev-dependencies]
-assert_cmd = "2.0"
-assert_fs = "1.0"
-predicates = "3"
-toml = "0.8"
-assert_matches = "1"
-tempdir = "0.3"
+assert_cmd = "2.2.2"
+assert_fs = "1.1.4"
+predicates = "3.1.4"
+assert_matches = "1.5.0"
+tempfile = "3.27.0"

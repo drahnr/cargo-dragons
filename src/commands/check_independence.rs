@@ -2,10 +2,9 @@ use std::str::FromStr;
 
 use super::check::{run_check_ephemeral, run_check_inplace};
 use cargo::{
-	core::{package::Package, Workspace},
-	ops::PackageOpts,
-	util::command_prelude::CompileMode,
 	GlobalContext,
+	core::{Workspace, compiler::CompileMode, package::Package},
+	ops::PackageOpts,
 };
 use clap::builder::styling::{AnsiColor, Style};
 use itertools::Itertools;
@@ -116,8 +115,8 @@ pub fn independence_check(
 			gctx.shell().status_with_color(
 				"Independence",
 				format!(
-				"{name} Checking compilation of these target permutations ({n}): {feature_permutations:?}"
-			),
+					"{name} Checking compilation of these target permutations ({n}): {feature_permutations:?}"
+				),
 				&style_from_color(AnsiColor::Magenta),
 			)?;
 
@@ -137,7 +136,17 @@ pub fn independence_check(
 
 				match context {
 					IndependenceCtx::Ephemeral => {
-						let tar_rw_lock = cargo::ops::package_one(&ws, package, opts)?;
+						let mut package_opts = opts.clone();
+						package_opts.to_package =
+							cargo::ops::Packages::Packages(vec![package.name().to_string()]);
+						let mut package_locks = cargo::ops::package(&ws, &package_opts)?;
+						let tar_rw_lock = match package_locks.len() {
+							1 => package_locks.pop().expect("length was checked"),
+							count => anyhow::bail!(
+								"Packaging {} produced {count} packages, expected one",
+								package.name()
+							),
+						};
 
 						run_check_ephemeral(
 							gctx,
