@@ -209,27 +209,26 @@ where
 		}
 	}
 
-	if !removed.is_empty() {
-		if let Some(Item::Table(features)) = root.get_mut("features") {
-			let keys = Vec::from_iter(features.iter().map(|(k, _v)| k.to_owned()));
-			for feat in keys {
-				if let Some(Item::Value(Value::Array(deps))) = features.get_mut(&feat) {
-					let mut to_remove = Vec::new();
-					for (idx, dep) in deps.iter().enumerate() {
-						if let Value::String(s) = dep {
-							if let Some(s) = s.value().trim().split('/').next() {
-								if removed.contains(&s.to_owned()) {
-									to_remove.push(idx);
-								}
-							}
-						}
+	if !removed.is_empty()
+		&& let Some(Item::Table(features)) = root.get_mut("features")
+	{
+		let keys = Vec::from_iter(features.iter().map(|(k, _v)| k.to_owned()));
+		for feat in keys {
+			if let Some(Item::Value(Value::Array(deps))) = features.get_mut(&feat) {
+				let mut to_remove = Vec::new();
+				for (idx, dep) in deps.iter().enumerate() {
+					if let Value::String(s) = dep
+						&& let Some(s) = s.value().trim().split('/').next()
+						&& removed.contains(&s.to_owned())
+					{
+						to_remove.push(idx);
 					}
-					if !to_remove.is_empty() {
-						// remove starting from the end:
-						to_remove.reverse();
-						for idx in to_remove {
-							deps.remove(idx);
-						}
+				}
+				if !to_remove.is_empty() {
+					// remove starting from the end:
+					to_remove.reverse();
+					for idx in to_remove {
+						deps.remove(idx);
 					}
 				}
 			}
@@ -256,7 +255,7 @@ pub(crate) fn empty_package_bool_to_action(empty_package_is_failure: bool) -> Em
 }
 
 pub(crate) fn handle_empty_package_is_failures<T>(
-	packages: &Vec<T>,
+	packages: &[T],
 	empty_package_is_failure: bool,
 ) -> anyhow::Result<()> {
 	if packages.is_empty() {

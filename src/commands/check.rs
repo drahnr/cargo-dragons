@@ -114,7 +114,6 @@ pub(crate) fn run_check_inplace<'a>(
 
 pub(crate) fn run_check_ephemeral<'a>(
 	gctx: &'a GlobalContext,
-	_ws: &Workspace<'a>,
 	package: &Package,
 	tar: &FileLock,
 	opts: &PackageOpts<'_>,
@@ -336,8 +335,9 @@ pub fn check_packages(
 		let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
 		gctx.shell().status("Packing", pkg)?;
 		match package(&pkg_ws, &opts) {
-			Ok(mut rw_locks) if rw_locks.len() == 1 =>
-				Ok((pkg_ws, rw_locks.pop().expect("we checked the count"))),
+			Ok(mut rw_locks) if rw_locks.len() == 1 => {
+				Ok((pkg_ws, rw_locks.pop().expect("we checked the count")))
+			},
 			Ok(rw_locks) => Err(anyhow::anyhow!(
 				"Packing {} produced {} packages, expected one",
 				pkg.name(),
@@ -375,7 +375,6 @@ pub fn check_packages(
 			.status("Verfying", pkg_ws.current().expect("We've build localised workspaces. qed"))?;
 		let ws = run_check_ephemeral(
 			gctx,
-			pkg_ws,
 			pkg_ws.current().unwrap(),
 			rw_lock,
 			&opts,

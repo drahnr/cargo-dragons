@@ -1,66 +1,32 @@
+mod support;
+
 use assert_cmd::prelude::*;
-use assert_fs::prelude::*;
-use cargo::{GlobalContext, core::SourceId, ops::read_package};
-use semver::Version;
-use std::process::Command;
+use support::TestWorkspace;
 
 #[test]
 fn set_pre() -> Result<(), Box<dyn std::error::Error>> {
-	let gctx = GlobalContext::default()?;
-	let temp = assert_fs::TempDir::new()?;
-	temp.copy_from("tests/fixtures/simple-base", &["*.toml", "*.rs"])?;
+	let ws = TestWorkspace::from_fixture("simple-base")?;
 
-	let mut cmd = Command::cargo_bin("cargo-dragons")?;
-
-	cmd.arg("--manifest-path")
-		.arg(temp.path())
-		.arg("version")
-		.arg("set-pre")
-		.arg("dev")
-		.arg("--packages")
-		.arg("crate(A|B)");
+	let mut cmd = ws.cargo_dragons()?;
+	cmd.arg("version").arg("set-pre").arg("dev").arg("--packages").arg("crate(A|B)");
 	cmd.assert().success();
 
-	let temp_path = temp.path().to_path_buf();
-	let source = SourceId::for_path(temp.path())?;
-
-	let crate_a = read_package(&temp_path.join("crateA").join("Cargo.toml"), source, &gctx)?;
-	let crate_b = read_package(&temp_path.join("crateB").join("Cargo.toml"), source, &gctx)?;
-	let crate_c = read_package(&temp_path.join("crateC").join("Cargo.toml"), source, &gctx)?;
-	assert_eq!(crate_a.version(), &Version::parse("0.1.0-dev")?);
-	assert_eq!(crate_b.version(), &Version::parse("2.0.0-dev")?);
-	assert_eq!(crate_c.version(), &Version::parse("3.1.0")?); // wasn't selected
-
-	temp.close()?;
+	assert_eq!(ws.package_version("crateA/Cargo.toml")?, "0.1.0-dev");
+	assert_eq!(ws.package_version("crateB/Cargo.toml")?, "2.0.0-dev");
+	assert_eq!(ws.package_version("crateC/Cargo.toml")?, "3.1.0"); // wasn't selected
 	Ok(())
 }
 
 #[test]
 fn bump_to_dev() -> Result<(), Box<dyn std::error::Error>> {
-	let gctx = GlobalContext::default()?;
-	let temp = assert_fs::TempDir::new()?;
-	temp.copy_from("tests/fixtures/simple-base", &["*.toml", "*.rs"])?;
+	let ws = TestWorkspace::from_fixture("simple-base")?;
 
-	let mut cmd = Command::cargo_bin("cargo-dragons")?;
-
-	cmd.arg("--manifest-path")
-		.arg(temp.path())
-		.arg("version")
-		.arg("bump-to-dev")
-		.arg("--packages")
-		.arg("crate.*");
+	let mut cmd = ws.cargo_dragons()?;
+	cmd.arg("version").arg("bump-to-dev").arg("--packages").arg("crate.*");
 	cmd.assert().success();
 
-	let temp_path = temp.path().to_path_buf();
-	let source = SourceId::for_path(temp.path())?;
-
-	let crate_a = read_package(&temp_path.join("crateA").join("Cargo.toml"), source, &gctx)?;
-	let crate_b = read_package(&temp_path.join("crateB").join("Cargo.toml"), source, &gctx)?;
-	let crate_c = read_package(&temp_path.join("crateC").join("Cargo.toml"), source, &gctx)?;
-	assert_eq!(crate_a.version(), &Version::parse("0.2.0-dev")?);
-	assert_eq!(crate_b.version(), &Version::parse("3.0.0-dev")?);
-	assert_eq!(crate_c.version(), &Version::parse("4.0.0-dev")?);
-
-	temp.close()?;
+	assert_eq!(ws.package_version("crateA/Cargo.toml")?, "0.2.0-dev");
+	assert_eq!(ws.package_version("crateB/Cargo.toml")?, "3.0.0-dev");
+	assert_eq!(ws.package_version("crateC/Cargo.toml")?, "4.0.0-dev");
 	Ok(())
 }

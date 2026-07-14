@@ -1,9 +1,9 @@
 use crate::util::{edit_each, members_deep};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use cargo::core::package::Package;
 
-use cargo::{core::Workspace, GlobalContext};
+use cargo::{GlobalContext, core::Workspace};
 use cargo_util_schemas::manifest::TomlManifest;
 use toml_edit::{Formatted, InlineTable, Item, Key, Table, TableLike, Value};
 
@@ -54,11 +54,7 @@ fn replace_version_by_workspace<T: TableLike + SortableTableKeysBy + std::fmt::D
 	);
 	// ensure `workspace = true` is the first key
 	tablelike.sort_values_by(|key1, _key2| {
-		if key1.get() == "workspace" {
-			std::cmp::Ordering::Less
-		} else {
-			std::cmp::Ordering::Equal
-		}
+		if key1.get() == "workspace" { std::cmp::Ordering::Less } else { std::cmp::Ordering::Equal }
 	});
 
 	log(gctx, packet, dep_name, version.as_str().unwrap_or_default());
@@ -85,7 +81,7 @@ where
 		let per_table = |deps: &mut Item| {
 			let Some(deps) = deps.as_table_mut() else { return Ok(()) };
 
-			for (dep_name, _dep) in &dependencies_to_unify {
+			for dep_name in dependencies_to_unify.keys() {
 				match deps.entry(dep_name.as_str()) {
 					toml_edit::Entry::Vacant(_) => {},
 					toml_edit::Entry::Occupied(mut occ) => {

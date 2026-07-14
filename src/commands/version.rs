@@ -1,14 +1,14 @@
 use crate::{
 	cli::VersionCommand,
 	util::{
-		edit_each, edit_each_dep, make_pkg_predicate, members_deep, DependencyAction,
-		DependencyEntry, DependencySection,
+		DependencyAction, DependencyEntry, DependencySection, edit_each, edit_each_dep,
+		make_pkg_predicate, members_deep,
 	},
 };
 use anyhow::Context;
 use cargo::{
-	core::{package::Package, Workspace},
 	GlobalContext,
+	core::{Workspace, package::Package},
 };
 use log::trace;
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
@@ -133,22 +133,22 @@ where
 			check_for_update(name, wrap, &updates, section, force_update)
 		});
 
-		if let Entry::Occupied(occupied) = root.entry("target") {
-			if let Item::Table(table) = occupied.get() {
-				let keys = Vec::from_iter(table.iter().filter_map(|(k, v)| {
-					if v.is_table() {
-						Some(k.to_owned())
-					} else {
-						None
-					}
-				}));
+		if let Entry::Occupied(occupied) = root.entry("target")
+			&& let Item::Table(table) = occupied.get()
+		{
+			let keys = Vec::from_iter(
+				table.iter().filter_map(
+					|(k, v)| {
+						if v.is_table() { Some(k.to_owned()) } else { None }
+					},
+				),
+			);
 
-				for k in keys {
-					if let Some(Item::Table(root)) = root.get_mut(&k) {
-						updates_count += edit_each_dep(root, |a, _, b, c| {
-							check_for_update(a, b, &updates, c, force_update)
-						});
-					}
+			for k in keys {
+				if let Some(Item::Table(root)) = root.get_mut(&k) {
+					updates_count += edit_each_dep(root, |a, _, b, c| {
+						check_for_update(a, b, &updates, c, force_update)
+					});
 				}
 			}
 		}

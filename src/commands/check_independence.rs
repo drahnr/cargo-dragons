@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use super::check::{run_check_ephemeral, run_check_inplace};
 use cargo::{
@@ -21,11 +21,11 @@ pub enum IndependenceCtx {
 	Ephemeral,
 }
 
-impl ToString for IndependenceCtx {
-	fn to_string(&self) -> String {
+impl fmt::Display for IndependenceCtx {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::InPlace => String::from("Inplace"),
-			Self::Ephemeral => String::from("Ephemeral"),
+			Self::InPlace => f.write_str("Inplace"),
+			Self::Ephemeral => f.write_str("Ephemeral"),
 		}
 	}
 }
@@ -92,7 +92,7 @@ pub fn independence_check(
 		"Processing",
 		format!(
 			"Running independence check using {} context for {} packages",
-			context.to_string(),
+			context,
 			packages.len()
 		),
 		&style_from_color(AnsiColor::Magenta),
@@ -150,7 +150,6 @@ pub fn independence_check(
 
 						run_check_ephemeral(
 							gctx,
-							&ws,
 							package,
 							&tar_rw_lock,
 							opts,
