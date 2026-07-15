@@ -250,9 +250,10 @@ mod tests {
 	use super::*;
 	use anyhow::Result;
 	use cargo::GlobalContext;
+	use fs_err as fs;
 	use itertools::Itertools;
 	use semver::Version;
-	use std::{fs, path::Path};
+	use std::{collections::HashSet, path::Path};
 
 	#[derive(Default, Debug, Clone)]
 	struct Krate {
@@ -396,5 +397,94 @@ publish = false
 			cycles[0].iter().map(|pkg| pkg.name().as_str()).collect::<Vec<_>>()
 		);
 		Ok(())
+	}
+
+	#[test]
+	fn larger_diamond() -> Result<()> {
+		let tmp = tempfile::tempdir()?;
+
+		let mut wsb = WorkspaceBuilder::default();
+		wsb.add_crate("app")
+			.version(1, 0, 0)
+			.add_dependency("left", "1")?
+			.add_dependency("middle", "1")?
+			.add_dependency("right", "1")?;
+		wsb.add_crate("left")
+			.version(1, 1, 0)
+			.add_dependency("shared-a", "1")?
+			.add_dependency("shared-b", "1")?;
+		wsb.add_crate("middle").version(1, 2, 0).add_dependency("shared-b", "1")?;
+		wsb.add_crate("right")
+			.version(1, 3, 0)
+			.add_dependency("shared-a", "1")?
+			.add_dependency("shared-b", "1")?;
+		wsb.add_crate("shared-a").version(1, 4, 0).add_dependency("foundation", "1")?;
+		wsb.add_crate("shared-b").version(1, 5, 0).add_dependency("foundation", "1")?;
+		wsb.add_crate("foundation").version(1, 6, 0);
+
+		let (gctx, ws) = wsb.build(tmp.path())?;
+		let to_release =
+			packages_to_release(gctx, &ws, |_pkg| true, tmp.path().join("larger-diamond.dot"))
+				.expect("larger diamond is acyclic");
+		let names = to_release.iter().map(|pkg| pkg.name().as_str()).collect::<Vec<_>>();
+
+		assert_eq!(names.len(), 7);
+		assert_eq!(
+			HashSet::<_>::from_iter(names.iter().copied()),
+			HashSet::from(["app", "left", "middle", "right", "shared-a", "shared-b", "foundation"])
+		);
+		assert_release_before(&names, "foundation", "shared-a");
+		assert_release_before(&names, "foundation", "shared-b");
+		assert_release_before(&names, "shared-a", "left");
+		assert_release_before(&names, "shared-b", "left");
+		assert_release_before(&names, "shared-b", "middle");
+		assert_release_before(&names, "shared-a", "right");
+		assert_release_before(&names, "shared-b", "right");
+		assert_release_before(&names, "left", "app");
+		assert_release_before(&names, "middle", "app");
+		assert_release_before(&names, "right", "app");
+		Ok(())
+	}
+
+	#[test]
+	fn larger_circular() -> Result<()> {
+		let tmp = tempfile::tempdir()?;
+
+		let mut wsb = WorkspaceBuilder::default();
+		wsb.add_crate("a").version(1, 0, 0).add_dependency("b", "*")?;
+		wsb.add_crate("b").version(1, 0, 0).add_dependency("c", "*")?;
+		wsb.add_crate("c").version(1, 0, 0).add_dependency("d", "*")?;
+		wsb.add_crate("d").version(1, 0, 0).add_dependency("e", "*")?;
+		wsb.add_crate("e").version(1, 0, 0).add_dependency("f", "*")?;
+		wsb.add_crate("f").version(1, 0, 0).add_dependency("a", "*")?;
+		wsb.add_crate("outside").version(1, 0, 0).add_dependency("a", "*")?;
+
+		let (gctx, ws) = wsb.build(tmp.path())?;
+		let ErrorWithCycles(cycles, _err) = packages_to_release_inner(
+			gctx,
+			&ws,
+			|_pkg| true,
+			tmp.path().join("larger-circular.dot"),
+		)
+		.unwrap_err();
+		assert_eq!(cycles.len(), 1);
+		let cycle_names = cycles[0].iter().map(|pkg| pkg.name().as_str()).collect::<HashSet<_>>();
+		assert_eq!(cycle_names, HashSet::from(["a", "b", "c", "d", "e", "f"]));
+		Ok(())
+	}
+
+	fn assert_release_before(names: &[&str], dependency: &str, dependent: &str) {
+		let dependency_index = names
+			.iter()
+			.position(|name| *name == dependency)
+			.expect("dependency is in release set");
+		let dependent_index = names
+			.iter()
+			.position(|name| *name == dependent)
+			.expect("dependent is in release set");
+		assert!(
+			dependency_index < dependent_index,
+			"expected {dependency} to be released before {dependent}; order was {names:?}"
+		);
 	}
 }
