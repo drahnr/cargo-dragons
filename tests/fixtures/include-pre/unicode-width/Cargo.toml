@@ -1,6 +1,6 @@
 [package]
 name = "unicode-width"
-version = "10.0.0-dev"
+version = "0.2.2-dev"
 authors = ["a <b@c.de>"]
 edition = "2018"
 license = "MIT"

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use cargo::{
-	GlobalContext,
-	core::{Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
+    GlobalContext,
+    core::{Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
 };
 use cargo_credential::Secret;
 use cargo_util_terminal::{Shell, Verbosity};
@@ -11,686 +11,769 @@ use std::{fs, path::PathBuf, str::FromStr};
 use toml_edit::Value;
 
 use crate::{
-	commands::{self, IndependenceCtx},
-	util::{handle_empty_package_is_failures, make_pkg_predicate, members_deep},
+    commands::{self, IndependenceCtx},
+    util::{
+        available_package_names, handle_empty_package_is_failures_with_available,
+        make_pkg_predicate, members_deep,
+    },
 };
 
+pub(crate) const PACKAGE_LIST_SENTINEL: &str = "__cargo_dragons_list_packages__";
+
 fn parse_regex(src: &str) -> Result<Regex, anyhow::Error> {
-	Regex::new(src).context("Parsing Regex failed")
+    Regex::new(src).context("Parsing Regex failed")
 }
 
 fn parse_compile_mode_str(src: &str) -> anyhow::Result<CompileMode> {
-	Ok(match src {
-		"build" => CompileMode::Build,
-		"test" => CompileMode::Test,
-		"check" => CompileMode::Check { test: false },
-		_ => anyhow::bail!(
-			"Only `build`, `test`, `check` are known compilation modes, provided is unknown: {}",
-			src
-		),
-	})
+    Ok(match src {
+        "build" => CompileMode::Build,
+        "test" => CompileMode::Test,
+        "check" => CompileMode::Check { test: false },
+        _ => anyhow::bail!(
+            "Only `build`, `test`, `check` are known compilation modes, provided is unknown: {}",
+            src
+        ),
+    })
+}
+
+fn package_list_with_versions(packages: &[Package]) -> String {
+    Vec::from_iter(
+        packages
+            .iter()
+            .map(|p| format!("{} ({})", p.name(), p.version())),
+    )
+    .join(", ")
+}
+
+fn report_already_published_versions(
+    gctx: &GlobalContext,
+    packages: &[Package],
+) -> anyhow::Result<()> {
+    if !packages.is_empty() {
+        let verb = if packages.len() == 1 { "is" } else { "are" };
+        gctx.shell().status(
+            "Already published",
+            format!(
+                "{} {verb} already present at the same version on the registry",
+                package_list_with_versions(packages)
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn handle_empty_release_plan(
+    gctx: &GlobalContext,
+    packages: &[Package],
+    already_published: &[Package],
+    empty_package_is_failure: bool,
+    available_packages: Option<&[String]>,
+) -> anyhow::Result<bool> {
+    report_already_published_versions(gctx, already_published)?;
+
+    if packages.is_empty() && !already_published.is_empty() {
+        if empty_package_is_failure {
+            anyhow::bail!(
+                "All selected packages are already present on the registry at the same version. Exiting"
+            );
+        }
+
+        println!(
+            "All selected packages are already present on the registry at the same version. All good. Exiting."
+        );
+        return Ok(true);
+    }
+
+    handle_empty_package_is_failures_with_available(
+        packages,
+        empty_package_is_failure,
+        available_packages,
+    )
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenerateReadmeMode {
-	// Generate Readme only if it is missing.
-	IfMissing,
-	// Generate Readme & append to existing file.
-	Append,
-	// Generate Readme & overwrite/replace the existing file.
-	Replace,
+    // Generate Readme only if it is missing.
+    IfMissing,
+    // Generate Readme & append to existing file.
+    Append,
+    // Generate Readme & overwrite/replace the existing file.
+    Replace,
 }
 
 #[derive(clap::Parser, Debug)]
 pub struct PackageSelectOptions {
-	/// Only use the specfic set of packages
-	///
-	/// Apply only to the packages named as defined. This is mutually exclusive with skip and
-	/// ignore-version-pre.
-	#[clap(short, long, value_parser = parse_regex)]
-	pub packages: Vec<Regex>,
+    /// Only use the specfic set of packages
+    ///
+    /// Apply only to the packages named as defined. This is mutually exclusive with skip and
+    /// ignore-version-pre.
+    #[clap(short, long, value_parser = parse_regex, num_args = 0..=1, default_missing_value = "__cargo_dragons_list_packages__")]
+    pub packages: Vec<Regex>,
 
-	/// Skip the package names matching ...
-	///
-	/// Provide one or many regular expression that, if the package name matches, means we skip
-	/// that package. Mutually exclusive with `--package`
-	#[clap(short, long, value_parser = parse_regex)]
-	pub skip: Vec<Regex>,
+    /// Skip the package names matching ...
+    ///
+    /// Provide one or many regular expression that, if the package name matches, means we skip
+    /// that package. Mutually exclusive with `--package`
+    #[clap(short, long, value_parser = parse_regex)]
+    pub skip: Vec<Regex>,
 
-	/// Ignore version pre-releases
-	///
-	/// Skip if the SemVer pre-release field is any of the listed. Mutually exclusive with
-	/// `--package`
-	#[clap(short, long)]
-	pub ignore_pre_version: Vec<String>,
+    /// Ignore version pre-releases
+    ///
+    /// Skip if the SemVer pre-release field is any of the listed. Mutually exclusive with
+    /// `--package`
+    #[clap(short, long)]
+    pub ignore_pre_version: Vec<String>,
 
-	/// Ignore whether `publish` is set.
-	///
-	/// If nothing else is specified, `publish = true` is assumed for every package. If publish
-	/// is set to false or any registry, it is ignored by default. If you want to include it
-	/// regardless, set this flag.
-	#[clap(long)]
-	pub ignore_publish: bool,
+    /// Ignore whether `publish` is set.
+    ///
+    /// If nothing else is specified, `publish = true` is assumed for every package. If publish
+    /// is set to false or any registry, it is ignored by default. If you want to include it
+    /// regardless, set this flag.
+    #[clap(long)]
+    pub ignore_publish: bool,
 
-	/// Automatically detect the packages, which changed compared to the given git commit.
-	///
-	/// Compares the current git `head` to the reference given, identifies which files changed
-	/// and attempts to identify the packages and its dependents through that mechanism. You
-	/// can use any `tag`, `branch` or `commit`, but you must be sure it is available
-	/// (and up to date) locally.
-	#[clap(short = 'c', long = "changed-since")]
-	pub changed_since: Option<String>,
+    /// Automatically detect the packages, which changed compared to the given git commit.
+    ///
+    /// Compares the current git `head` to the reference given, identifies which files changed
+    /// and attempts to identify the packages and its dependents through that mechanism. You
+    /// can use any `tag`, `branch` or `commit`, but you must be sure it is available
+    /// (and up to date) locally.
+    #[clap(short = 'c', long = "changed-since")]
+    pub changed_since: Option<String>,
 
-	/// Even if not selected by default, also include depedencies with a pre (cascading)
-	#[clap(long)]
-	pub include_pre_deps: bool,
+    /// Even if not selected by default, also include depedencies with a pre (cascading)
+    #[clap(long)]
+    pub include_pre_deps: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
 pub enum VersionCommand {
-	/// Pick pre-releases and put them to release mode.
-	Release {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Smart bumping of crates for the next breaking release, bumps minor for 0.x and major for
-	/// major > 1
-	BumpBreaking {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Smart bumping of crates for the next breaking release and add a `-dev`-pre-release-tag
-	BumpToDev {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-		/// Use this identifier instead of `dev`  for the pre-release
-		#[arg(long)]
-		pre_tag: Option<String>,
-	},
-	/// Increase the pre-release suffix, keep prefix, set to `.1` if no suffix is present
-	BumpPre {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Increase the patch version, unset prerelease
-	BumpPatch {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Increase the minor version, unset prerelease and patch
-	BumpMinor {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Increase the major version, unset prerelease, minor and patch
-	BumpMajor {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Hard set version to given string
-	Set {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Set to a specific Version
-		version: Version,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Set the pre-release to string
-	SetPre {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// The string to set the pre-release to
-		#[arg()]
-		pre: String,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
-	/// Set the metadata to string
-	SetBuild {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// The specific metadata to set to
-		#[arg()]
-		meta: String,
-		/// Force an update of dependencies
-		///
-		/// Hard set to the new version, do not check whether the given one still matches
-		#[arg(long)]
-		force_update: bool,
-	},
+    /// Pick pre-releases and put them to release mode.
+    Release {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Smart bumping of crates for the next breaking release, bumps minor for 0.x and major for
+    /// major > 1
+    BumpBreaking {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Smart bumping of crates for the next breaking release and add a `-dev`-pre-release-tag
+    BumpToDev {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+        /// Use this identifier instead of `dev`  for the pre-release
+        #[arg(long)]
+        pre_tag: Option<String>,
+    },
+    /// Increase the pre-release suffix, keep prefix, set to `.1` if no suffix is present
+    BumpPre {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Increase the patch version, unset prerelease
+    BumpPatch {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Increase the minor version, unset prerelease and patch
+    BumpMinor {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Increase the major version, unset prerelease, minor and patch
+    BumpMajor {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Hard set version to given string
+    Set {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Set to a specific Version
+        version: Version,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Set the pre-release to string
+    SetPre {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// The string to set the pre-release to
+        #[arg()]
+        pre: String,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
+    /// Set the metadata to string
+    SetBuild {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// The specific metadata to set to
+        #[arg()]
+        meta: String,
+        /// Force an update of dependencies
+        ///
+        /// Hard set to the new version, do not check whether the given one still matches
+        #[arg(long)]
+        force_update: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Command {
-	/// Generate the clap completions
-	Completions {
-		#[arg(short, long, default_value = "zsh")]
-		shell: clap_complete::Shell,
-	},
-	/// Set a field in all manifests
-	///
-	/// Go through all matching crates and set the field name to value.
-	/// Add the field if it doesn't exists yet.
-	Set {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// The root key table to look the key up in
-		#[arg(short, long, default_value = "package")]
-		root_key: String,
-		/// Name of the field
-		name: String,
-		/// Value to set it, too
-		value: String,
-	},
-	/// Rename a package
-	///
-	/// Update the internally used references to the package by adding an `package = ` entry
-	/// to the dependencies.
-	Rename {
-		/// Name of the field
-		old_name: String,
-		/// Value to set it, too
-		new_name: String,
-	},
-	/// Messing with versioning
-	///
-	/// Change versions as requested, then update all package's dependencies
-	/// to ensure they are still matching
-	Version {
-		#[command(subcommand)]
-		cmd: VersionCommand,
-	},
-	/// Add owners for a lot of crates
-	AddOwner {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Owner to add to the packages
-		owner: String,
-		/// the crates.io token to use for API access
-		///
-		/// If this is nor the environment variable are set, this falls
-		/// back to the default value provided in the user directory
-		#[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
-		token: Option<String>,
-	},
-	/// Deactivate the `[dev-dependencies]`
-	///
-	/// Go through the workspace and remove the `[dev-dependencies]`-section from the package
-	/// manifest for all packages matching.
-	DeDevDeps {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-	},
-	/// Check the package(s) for unused dependencies
-	CleanDeps {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Do only check if you'd clean up.
-		///
-		/// Abort if you found unused dependencies
-		#[arg(long = "check")]
-		check_only: bool,
-	},
-	/// Calculate the packages and the order in which to release
-	///
-	/// Go through the members of the workspace and calculate the dependency tree. Halt early
-	/// if any circles are found
-	ToRelease {
-		/// Do not disable dev-dependencies
-		///
-		/// By default we disable dev-dependencies before the run.
-		#[arg(long = "include-dev-deps")]
-		include_dev: bool,
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Consider no package matching the criteria an error
-		#[arg(long)]
-		empty_package_is_failure: bool,
+    /// Generate the clap completions
+    Completions {
+        #[arg(short, long, default_value = "zsh")]
+        shell: clap_complete::Shell,
+    },
+    /// Set a field in all manifests
+    ///
+    /// Go through all matching crates and set the field name to value.
+    /// Add the field if it doesn't exists yet.
+    Set {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// The root key table to look the key up in
+        #[arg(short, long, default_value = "package")]
+        root_key: String,
+        /// Name of the field
+        name: String,
+        /// Value to set it, too
+        value: String,
+    },
+    /// Rename a package
+    ///
+    /// Update the internally used references to the package by adding an `package = ` entry
+    /// to the dependencies.
+    Rename {
+        /// Name of the field
+        old_name: String,
+        /// Value to set it, too
+        new_name: String,
+    },
+    /// Messing with versioning
+    ///
+    /// Change versions as requested, then update all package's dependencies
+    /// to ensure they are still matching
+    Version {
+        #[command(subcommand)]
+        cmd: VersionCommand,
+    },
+    /// Add owners for a lot of crates
+    AddOwner {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Owner to add to the packages
+        owner: String,
+        /// the crates.io token to use for API access
+        ///
+        /// If this is nor the environment variable are set, this falls
+        /// back to the default value provided in the user directory
+        #[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
+        token: Option<String>,
+    },
+    /// Check the package(s) for unused dependencies
+    CleanDeps {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Do only check if you'd clean up.
+        ///
+        /// Abort if you found unused dependencies
+        #[arg(long = "check")]
+        check_only: bool,
+    },
+    /// Calculate the packages and the order in which to release
+    ///
+    /// Go through the members of the workspace and calculate the dependency tree. Halt early
+    /// if any circles are found
+    ToRelease {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Consider no package matching the criteria an error
+        #[arg(long)]
+        empty_package_is_failure: bool,
 
-		/// Write a graphviz dot of all crates to be release and their dependency relation
-		/// to the given path.
-		#[arg(long = "dot-graph")]
-		dot_graph: Option<PathBuf>,
-	},
-	/// Check whether crates can be packaged
-	///
-	/// Package the selected packages, then check the packages can be build with
-	/// the packages as dependencies as to be released.
-	Check {
-		/// Do not disable dev-dependencies
-		///
-		/// By default we disable dev-dependencies before the run.
-		#[arg(long = "include-dev-deps")]
-		include_dev: bool,
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Actually build the package
-		///
-		/// By default, this only runs `cargo check` against the package
-		/// build. Set this flag to have it run an actual `build` instead.
-		#[arg(long)]
-		build: bool,
-		/// Generate & verify whether the Readme file has changed.
-		///
-		/// When enabled, this will generate a Readme file from
-		/// the crate's doc comments (using cargo-readme), and
-		/// check whether the existing Readme (if any) matches.
-		#[arg(long)]
-		check_readme: bool,
-		/// Consider no package matching the criteria an error
-		#[arg(long)]
-		empty_package_is_failure: bool,
+        /// Write a graphviz dot of all crates to be release and their dependency relation
+        /// to the given path.
+        #[arg(long = "dot-graph")]
+        dot_graph: Option<PathBuf>,
+    },
+    /// Check whether crates can be packaged
+    ///
+    /// Package the selected packages, then check the packages can be build with
+    /// the packages as dependencies as to be released.
+    Check {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Actually build the package
+        ///
+        /// By default, this only runs `cargo check` against the package
+        /// build. Set this flag to have it run an actual `build` instead.
+        #[arg(long)]
+        build: bool,
+        /// Generate & verify whether the Readme file has changed.
+        ///
+        /// When enabled, this will generate a Readme file from
+        /// the crate's doc comments (using cargo-readme), and
+        /// check whether the existing Readme (if any) matches.
+        #[arg(long)]
+        check_readme: bool,
+        /// Consider no package matching the criteria an error
+        #[arg(long)]
+        empty_package_is_failure: bool,
 
-		/// Write a graphviz dot file to the given destination
-		#[arg(long = "dot-graph")]
-		dot_graph: Option<PathBuf>,
-	},
-	/// Generate Readme files
-	///
-	/// Generate Readme files for the selected packges, based
-	/// on the crates' doc comments.
-	#[cfg(feature = "gen-readme")]
-	GenReadme {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Generate readme file for package.
-		///
-		/// Depending on the chosen option, this will generate a Readme
-		/// file from the crate's doc comments (using cargo-readme).
-		#[arg(long)]
-		readme_mode: GenerateReadmeMode,
-		/// Consider no package matching the criteria an error
-		#[arg(long)]
-		empty_package_is_failure: bool,
-	},
-	/// Unleash 'em dragons
-	///
-	/// Package all selected crates, check them and attempt to publish them.
-	Unleash {
-		/// Do not disable dev-dependencies
-		///
-		/// By default we disable dev-dependencies before the run.
-		#[arg(long = "include-dev-deps")]
-		include_dev: bool,
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-		/// Actually build the package in check
-		///
-		/// By default, this only runs `cargo check` against the package
-		/// build. Set this flag to have it run an actual `build` instead.
-		#[arg(long)]
-		build: bool,
-		/// dry run
-		#[arg(long)]
-		dry_run: bool,
-		/// dry run
-		#[arg(long)]
-		no_check: bool,
-		/// Ensure we have the owner set as well
-		#[arg(long = "owner")]
-		add_owner: Option<String>,
-		/// the crates.io token to use for uploading
-		///
-		/// If this is nor the environment variable are set, this falls
-		/// back to the default value provided in the user directory
-		#[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
-		token: Option<String>,
-		/// Generate & verify whether the Readme file has changed.
-		///
-		/// When enabled, this will generate a Readme file from
-		/// the crate's doc comments (using cargo-readme), and
-		/// check whether the existing Readme (if any) matches.
-		#[arg(long)]
-		check_readme: bool,
-		/// Consider no package matching the criteria an error
-		#[arg(long)]
-		empty_package_is_failure: bool,
+        /// Write a graphviz dot file to the given destination
+        #[arg(long = "dot-graph")]
+        dot_graph: Option<PathBuf>,
+    },
+    /// Generate Readme files
+    ///
+    /// Generate Readme files for the selected packges, based
+    /// on the crates' doc comments.
+    #[cfg(feature = "gen-readme")]
+    GenReadme {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Generate readme file for package.
+        ///
+        /// Depending on the chosen option, this will generate a Readme
+        /// file from the crate's doc comments (using cargo-readme).
+        #[arg(long)]
+        readme_mode: GenerateReadmeMode,
+        /// Consider no package matching the criteria an error
+        #[arg(long)]
+        empty_package_is_failure: bool,
+    },
+    /// Unleash 'em dragons
+    ///
+    /// Package all selected crates, check them and attempt to publish them.
+    Unleash {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+        /// Actually build the package in check
+        ///
+        /// By default, this only runs `cargo check` against the package
+        /// build. Set this flag to have it run an actual `build` instead.
+        #[arg(long)]
+        build: bool,
+        /// dry run
+        #[arg(long)]
+        dry_run: bool,
+        /// dry run
+        #[arg(long)]
+        no_check: bool,
+        /// Ensure we have the owner set as well
+        #[arg(long = "owner")]
+        add_owner: Option<String>,
+        /// the crates.io token to use for uploading
+        ///
+        /// If this is nor the environment variable are set, this falls
+        /// back to the default value provided in the user directory
+        #[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
+        token: Option<String>,
+        /// Generate & verify whether the Readme file has changed.
+        ///
+        /// When enabled, this will generate a Readme file from
+        /// the crate's doc comments (using cargo-readme), and
+        /// check whether the existing Readme (if any) matches.
+        #[arg(long)]
+        check_readme: bool,
+        /// Consider no package matching the criteria an error
+        #[arg(long)]
+        empty_package_is_failure: bool,
 
-		/// Write a graphviz dot file to the given destination
-		#[arg(long = "dot-graph")]
-		dot_graph: Option<PathBuf>,
-	},
-	/// Unify all dependencies to those used in the workspace
-	/// and suggest additional ones.
-	UnifyDeps {
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
-	},
-	/// Check whether packages can be build independently
-	///
-	/// Ensure all packages can be build not only as part of the workspace
-	/// with workspace joint dependency and feature resolution, but also with per package
-	/// compilation
-	IndependenceCheck {
-		/// Specifiy one of the three check modes:
-		///
-		/// "test" - Building the tests for the symbols, does not work after de-devdeps.
-		/// "build" - Building a target with rustc (lib or bin).
-		/// "check" - Building a target with rustc to emit rmeta metadata only.
-		#[arg(long, default_value="test", value_parser = parse_compile_mode_str)]
-		mode: Vec<CompileMode>,
+        /// Write a graphviz dot file to the given destination
+        #[arg(long = "dot-graph")]
+        dot_graph: Option<PathBuf>,
+    },
+    /// Unify all dependencies to those used in the workspace
+    /// and suggest additional ones.
+    UnifyDeps {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
+    },
+    /// Check whether packages can be build independently
+    ///
+    /// Ensure all packages can be build not only as part of the workspace
+    /// with workspace joint dependency and feature resolution, but also with per package
+    /// compilation
+    IndependenceCheck {
+        /// Specifiy one of the three check modes:
+        ///
+        /// "test" - Building the tests for the symbols.
+        /// "build" - Building a target with rustc (lib or bin).
+        /// "check" - Building a target with rustc to emit rmeta metadata only.
+        #[arg(long, default_value="test", value_parser = parse_compile_mode_str)]
+        mode: Vec<CompileMode>,
 
-		/// Define the context in which check should be executed:
-		///
-		/// "ephemeral" - which would use a temporary package as a context.
-		///
-		/// "inplace" - which will perform the necessary compilations in the package directory.
-		#[arg(long="ctx", default_value_t = IndependenceCtx::default(), value_parser = IndependenceCtx::from_str)]
-		context: IndependenceCtx,
+        /// Define the context in which check should be executed:
+        ///
+        /// "ephemeral" - which would use a temporary package as a context.
+        ///
+        /// "inplace" - which will perform the necessary compilations in the package directory.
+        #[arg(long="ctx", default_value_t = IndependenceCtx::default(), value_parser = IndependenceCtx::from_str)]
+        context: IndependenceCtx,
 
-		#[command(flatten)]
-		pkg_opts: PackageSelectOptions,
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
 
-		/// Do not attempt to compile all packages, but fail at the first one that doesn't pass the
-		/// test.
-		#[arg(long)]
-		failfast: bool,
-	},
+        /// Do not attempt to compile all packages, but fail at the first one that doesn't pass the
+        /// test.
+        #[arg(long)]
+        failfast: bool,
+    },
 }
 
 #[derive(Debug, clap::Parser)]
 #[command(version, about = "Release the crates of this massiv monorepo")]
 pub struct Args {
-	/// The path to workspace manifest
-	///
-	/// Can either be the folder if the file is named `Cargo.toml` or the path
-	/// to the specific `.toml`-manifest to load as the cargo workspace.
-	#[arg(short, long, value_parser=PathBuf::from_str, default_value = ".", value_hint = clap::ValueHint::AnyPath)]
-	#[clap(short, long, global(true))]
-	pub manifest_path: PathBuf,
+    /// The path to workspace manifest
+    ///
+    /// Can either be the folder if the file is named `Cargo.toml` or the path
+    /// to the specific `.toml`-manifest to load as the cargo workspace.
+    #[arg(short, long, value_parser=PathBuf::from_str, default_value = ".", value_hint = clap::ValueHint::AnyPath)]
+    #[clap(short, long, global(true))]
+    pub manifest_path: PathBuf,
 
-	// TODO consider using these  instead of custom parsin
-	// #[command(flatten)]
-	// manifest: clap_cargo::Manifest,
-	// #[command(flatten)]
-	// workspace: clap_cargo::Workspace,
-	// #[command(flatten)]
-	// features: clap_cargo::Features,
-	#[command(flatten)]
-	pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
+    // TODO consider using these  instead of custom parsin
+    // #[command(flatten)]
+    // manifest: clap_cargo::Manifest,
+    // #[command(flatten)]
+    // workspace: clap_cargo::Workspace,
+    // #[command(flatten)]
+    // features: clap_cargo::Features,
+    #[command(flatten)]
+    pub verbosity: clap_verbosity_flag::Verbosity<clap_verbosity_flag::InfoLevel>,
 
-	#[command(subcommand)]
-	pub cmd: Command,
+    #[command(subcommand)]
+    pub cmd: Command,
 }
 
 fn verify_readme_feature() -> anyhow::Result<()> {
-	if cfg!(feature = "gen-readme") {
-		Ok(())
-	} else {
-		anyhow::bail!(
-			"Readme related functionalities not available. Please re-install with gen-readme feature."
-		)
-	}
+    if cfg!(feature = "gen-readme") {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Readme related functionalities not available. Please re-install with gen-readme feature."
+        )
+    }
 }
 
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Args) -> Result<(), anyhow::Error> {
-	pretty_env_logger::init();
+    pretty_env_logger::init();
 
-	let gctx = GlobalContext::new(
-		Shell::new(),
-		args.manifest_path.parent().unwrap().to_path_buf(),
-		dirs::home_dir().unwrap(),
-	);
-	gctx.values()?;
-	gctx.load_credentials()?;
+    let gctx = GlobalContext::new(
+        Shell::new(),
+        args.manifest_path.parent().unwrap().to_path_buf(),
+        dirs::home_dir().unwrap(),
+    );
+    gctx.values()?;
+    gctx.load_credentials()?;
 
-	let get_token = |t: Option<Secret<String>>| -> Result<Option<Secret<String>>, anyhow::Error> {
-		Ok(match t {
-			None => gctx.get::<Option<Secret<String>>>("registry.token")?,
-			_ => t,
-		})
-	};
+    let get_token = |t: Option<Secret<String>>| -> Result<Option<Secret<String>>, anyhow::Error> {
+        Ok(match t {
+            None => gctx.get::<Option<Secret<String>>>("registry.token")?,
+            _ => t,
+        })
+    };
 
-	gctx.shell()
-		.set_verbosity(match args.verbosity.log_level().unwrap_or(log::Level::Error) {
-			log::Level::Trace | log::Level::Debug => Verbosity::Verbose,
-			log::Level::Info => Verbosity::Normal,
-			log::Level::Warn => Verbosity::Normal,
-			log::Level::Error => Verbosity::Quiet,
-		});
+    gctx.shell().set_verbosity(
+        match args.verbosity.log_level().unwrap_or(log::Level::Error) {
+            log::Level::Trace | log::Level::Debug => Verbosity::Verbose,
+            log::Level::Info => Verbosity::Normal,
+            log::Level::Warn => Verbosity::Normal,
+            log::Level::Error => Verbosity::Quiet,
+        },
+    );
 
-	let root_manifest = {
-		let mut path = args.manifest_path.clone();
-		if path.is_dir() {
-			path = path.join("Cargo.toml")
-		}
-		fs::canonicalize(path)?
-	};
+    let root_manifest = {
+        let mut path = args.manifest_path.clone();
+        if path.is_dir() {
+            path = path.join("Cargo.toml")
+        }
+        fs::canonicalize(path)?
+    };
 
-	let mut ws = Workspace::new(&root_manifest, &gctx).context("Reading workspace failed")?;
+    let mut ws = Workspace::new(&root_manifest, &gctx).context("Reading workspace failed")?;
 
-	let maybe_patch =
-		|ws, shouldnt_patch, predicate: &dyn Fn(&Package) -> bool| -> anyhow::Result<Workspace> {
-			if shouldnt_patch {
-				return Ok(ws);
-			}
+    //TODO: Seperate matching from Command implementations to make this a more readable codebase
+    match args.cmd {
+        Command::Completions { shell } => {
+            let sink = &mut std::io::stdout();
+            let mut app = <Args as clap::CommandFactory>::command();
+            let app = &mut app;
+            clap_complete::generate(shell, app, app.get_name().to_string(), sink);
+            Ok(())
+        }
+        Command::CleanDeps {
+            pkg_opts,
+            check_only,
+        } => {
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+            commands::clean_up_unused_dependencies(&gctx, &ws, predicate, check_only)
+        }
+        Command::AddOwner {
+            owner,
+            token,
+            pkg_opts,
+        } => {
+            let token = get_token(token.map(Secret::from))?;
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-			gctx.shell().status("Preparing", "Disabling Dev Dependencies")?;
+            for pkg in ws.members().filter(|p| predicate(p)) {
+                commands::add_owner(&gctx, pkg, owner.clone(), token.clone())?;
+            }
+            Ok(())
+        }
+        Command::Set {
+            root_key,
+            name,
+            value,
+            pkg_opts,
+        } => {
+            if name == "name" {
+                anyhow::bail!("To change the name please use the rename command!");
+            }
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+            let type_value =
+                if let Ok(v) = bool::from_str(&value).map_err(|_| i64::from_str(&value)) {
+                    Value::from(v)
+                } else {
+                    Value::from(value)
+                };
 
-			commands::deactivate_dev_dependencies(
-				ws.members()
-					.filter(|p| predicate(p) && gctx.shell().status("Patching", p.name()).is_ok()),
-			)?;
-			// assure to re-read the workspace, otherwise `fn to_release` will still find cycles
-			// (rightfully so!)
-			Workspace::new(&root_manifest, &gctx).context("Reading workspace failed")
-		};
+            commands::set_field(
+                ws.members().filter(|p| {
+                    predicate(p) && gctx.shell().status("Setting on", p.name()).is_ok()
+                }),
+                root_key,
+                name,
+                type_value,
+            )
+        }
+        Command::UnifyDeps { pkg_opts } => {
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+            commands::unify_dependencies(&gctx, &mut ws, predicate)?;
+            Ok(())
+        }
+        Command::Rename { old_name, new_name } => {
+            let predicate = |p: &Package| p.name().to_string().trim() == old_name;
+            let renamer = |_p: &Package| Some(new_name.clone());
 
-	//TODO: Seperate matching from Command implementations to make this a more readable codebase
-	match args.cmd {
-		Command::Completions { shell } => {
-			let sink = &mut std::io::stdout();
-			let mut app = <Args as clap::CommandFactory>::command();
-			let app = &mut app;
-			clap_complete::generate(shell, app, app.get_name().to_string(), sink);
-			Ok(())
-		},
-		Command::CleanDeps { pkg_opts, check_only } => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			commands::clean_up_unused_dependencies(&gctx, &ws, predicate, check_only)
-		},
-		Command::AddOwner { owner, token, pkg_opts } => {
-			let token = get_token(token.map(Secret::from))?;
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+            commands::rename(&gctx, &ws, predicate, renamer)
+        }
+        Command::Version { cmd } => {
+            commands::adjust_version(&gctx, &ws, cmd)?;
+            Ok(())
+        }
+        Command::ToRelease {
+            pkg_opts,
+            empty_package_is_failure,
+            dot_graph,
+        } => {
+            let available_packages = pkg_opts
+                .packages
+                .is_empty()
+                .then(|| available_package_names(&gctx, &ws));
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-			for pkg in ws.members().filter(|p| predicate(p)) {
-				commands::add_owner(&gctx, pkg, owner.clone(), token.clone())?;
-			}
-			Ok(())
-		},
-		Command::Set { root_key, name, value, pkg_opts } => {
-			if name == "name" {
-				anyhow::bail!("To change the name please use the rename command!");
-			}
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			let type_value =
-				if let Ok(v) = bool::from_str(&value).map_err(|_| i64::from_str(&value)) {
-					Value::from(v)
-				} else {
-					Value::from(value)
-				};
+            let plan = commands::release_plan(&gctx, &ws, predicate, dot_graph)?;
+            if handle_empty_release_plan(
+                &gctx,
+                &plan.to_release,
+                &plan.already_published,
+                empty_package_is_failure,
+                available_packages.as_deref(),
+            )? {
+                return Ok(());
+            }
 
-			commands::set_field(
-				ws.members().filter(|p| {
-					predicate(p) && gctx.shell().status("Setting on", p.name()).is_ok()
-				}),
-				root_key,
-				name,
-				type_value,
-			)
-		},
-		Command::UnifyDeps { pkg_opts } => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			commands::unify_dependencies(&gctx, &mut ws, predicate)?;
-			Ok(())
-		},
-		Command::Rename { old_name, new_name } => {
-			let predicate = |p: &Package| p.name().to_string().trim() == old_name;
-			let renamer = |_p: &Package| Some(new_name.clone());
+            println!("{:}", package_list_with_versions(&plan.to_release));
 
-			commands::rename(&gctx, &ws, predicate, renamer)
-		},
-		Command::Version { cmd } => {
-			commands::adjust_version(&gctx, &ws, cmd)?;
-			Ok(())
-		},
-		Command::DeDevDeps { pkg_opts } => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			let _ = maybe_patch(ws, false, &predicate)?;
-			Ok(())
-		},
-		Command::ToRelease { include_dev, pkg_opts, empty_package_is_failure, dot_graph } => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			let ws = maybe_patch(ws, include_dev, &predicate)?;
+            Ok(())
+        }
+        Command::Check {
+            build,
+            pkg_opts,
+            check_readme,
+            empty_package_is_failure,
+            dot_graph,
+        } => {
+            if check_readme {
+                verify_readme_feature()?;
+            }
 
-			let packages = commands::packages_to_release(&gctx, &ws, predicate, dot_graph)?;
-			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
+            let available_packages = pkg_opts
+                .packages
+                .is_empty()
+                .then(|| available_package_names(&gctx, &ws));
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-			println!(
-				"{:}",
-				Vec::from_iter(packages.iter().map(|p| format!("{} ({})", p.name(), p.version())))
-					.join(", ")
-			);
+            let plan = commands::release_plan(&gctx, &ws, predicate, dot_graph)?;
+            if handle_empty_release_plan(
+                &gctx,
+                &plan.to_release,
+                &plan.already_published,
+                empty_package_is_failure,
+                available_packages.as_deref(),
+            )? {
+                return Ok(());
+            }
 
-			Ok(())
-		},
-		Command::Check {
-			include_dev,
-			build,
-			pkg_opts,
-			check_readme,
-			empty_package_is_failure,
-			dot_graph,
-		} => {
-			if check_readme {
-				verify_readme_feature()?;
-			}
+            commands::check_packages(&gctx, &plan.to_release, &ws, build, check_readme)
+        }
+        #[cfg(feature = "gen-readme")]
+        Command::GenReadme {
+            pkg_opts,
+            readme_mode,
+            empty_package_is_failure,
+        } => {
+            let available_packages = pkg_opts
+                .packages
+                .is_empty()
+                .then(|| available_package_names(&gctx, &ws));
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			let ws = maybe_patch(ws, include_dev, &predicate)?;
+            let plan = commands::release_plan(&gctx, &ws, predicate, None)?;
+            if handle_empty_release_plan(
+                &gctx,
+                &plan.to_release,
+                &plan.already_published,
+                empty_package_is_failure,
+                available_packages.as_deref(),
+            )? {
+                return Ok(());
+            }
 
-			let packages = commands::packages_to_release(&gctx, &ws, predicate, dot_graph)?;
-			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
+            commands::gen_all_readme(&gctx, plan.to_release, &ws, readme_mode)
+        }
 
-			commands::check_packages(&gctx, &packages, &ws, build, check_readme)
-		},
-		#[cfg(feature = "gen-readme")]
-		Command::GenReadme { pkg_opts, readme_mode, empty_package_is_failure } => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			let ws = maybe_patch(ws, false, &predicate)?;
+        Command::Unleash {
+            dry_run,
+            no_check,
+            token,
+            add_owner,
+            build,
+            pkg_opts,
+            check_readme,
+            empty_package_is_failure,
+            dot_graph,
+        } => {
+            let available_packages = pkg_opts
+                .packages
+                .is_empty()
+                .then(|| available_package_names(&gctx, &ws));
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-			let packages = commands::packages_to_release(&gctx, &ws, predicate, None)?;
-			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
+            let plan = commands::release_plan(&gctx, &ws, predicate, dot_graph)?;
+            if handle_empty_release_plan(
+                &gctx,
+                &plan.to_release,
+                &plan.already_published,
+                empty_package_is_failure,
+                available_packages.as_deref(),
+            )? {
+                return Ok(());
+            }
+            let packages = plan.to_release;
 
-			commands::gen_all_readme(&gctx, packages, &ws, readme_mode)
-		},
+            // Dry-run should only report the planned release set. Cargo's package verification
+            // strips path dependencies and checks crates.io, which rejects unpublished local
+            // release candidates that are meant to be published together.
+            if !no_check && !dry_run {
+                if check_readme {
+                    verify_readme_feature()?;
+                }
 
-		Command::Unleash {
-			dry_run,
-			no_check,
-			token,
-			include_dev,
-			add_owner,
-			build,
-			pkg_opts,
-			check_readme,
-			empty_package_is_failure,
-			dot_graph,
-		} => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-			let ws = maybe_patch(ws, include_dev, &predicate)?;
+                commands::check_packages(&gctx, &packages, &ws, build, check_readme)?;
+            }
 
-			let packages = commands::packages_to_release(&gctx, &ws, predicate, dot_graph)?;
-			handle_empty_package_is_failures(&packages, empty_package_is_failure)?;
+            gctx.shell()
+                .status("Releasing", package_list_with_versions(&packages))?;
 
-			if !no_check {
-				if check_readme {
-					verify_readme_feature()?;
-				}
+            let token = get_token(token.map(Secret::from))?;
+            commands::release(&gctx, packages, ws, dry_run, token, add_owner)
+        }
+        Command::IndependenceCheck {
+            mode: modes,
+            context,
+            pkg_opts,
+            failfast,
+        } => {
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-				commands::check_packages(&gctx, &packages, &ws, build, check_readme)?;
-			}
+            let packages = Vec::<Package>::from_iter(
+                members_deep(&gctx, &ws)
+                    .iter()
+                    .filter(|p| predicate(p))
+                    .cloned(),
+            );
+            let opts = cargo::ops::PackageOpts {
+                gctx: &gctx,
+                verify: false,
+                check_metadata: false,
+                list: false,
+                fmt: cargo::ops::PackageMessageFormat::Human,
+                allow_dirty: true,
+                include_lockfile: true,
+                jobs: None,
+                to_package: cargo::ops::Packages::Default,
+                targets: Default::default(),
+                cli_features: CliFeatures {
+                    features: Default::default(),
+                    all_features: false,
+                    uses_default_features: true,
+                },
+                keep_going: !failfast,
+                reg_or_index: None,
+                dry_run: false,
+            };
 
-			gctx.shell().status(
-				"Releasing",
-				Vec::from_iter(packages.iter().map(|p| format!("{} ({})", p.name(), p.version())))
-					.join(", "),
-			)?;
-
-			let token = get_token(token.map(Secret::from))?;
-			commands::release(&gctx, packages, ws, dry_run, token, add_owner)
-		},
-		Command::IndependenceCheck { mode: modes, context, pkg_opts, failfast } => {
-			let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
-
-			let packages = Vec::<Package>::from_iter(
-				members_deep(&gctx, &ws).iter().filter(|p| predicate(p)).cloned(),
-			);
-			let opts = cargo::ops::PackageOpts {
-				gctx: &gctx,
-				verify: false,
-				check_metadata: false,
-				list: false,
-				fmt: cargo::ops::PackageMessageFormat::Human,
-				allow_dirty: true,
-				include_lockfile: true,
-				jobs: None,
-				to_package: cargo::ops::Packages::Default,
-				targets: Default::default(),
-				cli_features: CliFeatures {
-					features: Default::default(),
-					all_features: false,
-					uses_default_features: true,
-				},
-				keep_going: !failfast,
-				reg_or_index: None,
-				dry_run: false,
-			};
-
-			commands::independence_check(&gctx, packages, &opts, ws, modes, context)
-		},
-	}
+            commands::independence_check(&gctx, packages, &opts, ws, modes, context)
+        }
+    }
 }

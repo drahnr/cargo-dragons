@@ -13,15 +13,15 @@ mod tests;
 use cli::Args;
 
 fn main() -> Result<(), anyhow::Error> {
-	let mut argv = Vec::new();
-	let mut args = std::env::args();
-	argv.extend(args.next());
-	if let Some(h) = args.next()
-		&& h != "dragons"
-	{
-		argv.push(h)
-	}
-	argv.extend(args);
-	let args = Args::parse_from(argv);
-	cli::run(args)
+    let mut argv = Vec::new();
+    let mut args = std::env::args();
+    argv.extend(args.next());
+    if let Some(h) = args.next()
+        && h != "dragons"
+    {
+        argv.push(h)
+    }
+    argv.extend(args);
+    let args = Args::parse_from(argv);
+    cli::run(args)
 }

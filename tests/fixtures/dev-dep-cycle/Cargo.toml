@@ -1,0 +1,2 @@
+[workspace]
+members = ["cycle-helper", "cycle-consumer"]

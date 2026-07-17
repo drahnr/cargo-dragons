@@ -1,16 +1,16 @@
 [package]
 name = "cargo-dragons"
-version = "1.0.0-alpha.dev"
+version = "1.0.0-alpha.7"
 authors = [
-  "Benjamin Kampmann <ben@gnunicorn.org>",
   "Bernhard Schuster <bernhard@ahoi.io>",
+  "Benjamin Kampmann <ben@gnunicorn.org>",
 ]
 edition = "2024"
 rust-version = "1.95"
 license = "GPL-3.0"
 repository = "https://github.com/drahnr/cargo-dragons"
 description = "Tooling to manage releasing of crates in massiv workspaces/monorepos"
-readme = "Readme.md"
+readme = "README.md"
 keywords = ["cargo", "publishing", "dragons", "workspaces", "monorepo"]
 categories = ["development-tools", "development-tools::cargo-plugins"]
 
@@ -55,6 +55,7 @@ tar = "0.4.46"
 cargo-readme = { version = "3.3.2", optional = true }
 lazy_static = { version = "1.5.0", optional = true }
 sha1 = { version = "0.11.0", optional = true }
+colorize = "0.1.0"
 
 [dev-dependencies]
 assert_cmd = "2.2.2"

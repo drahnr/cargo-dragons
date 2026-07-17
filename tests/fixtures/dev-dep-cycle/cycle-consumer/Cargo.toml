@@ -1,0 +1,11 @@
+[package]
+name = "cycle-consumer"
+version = "0.1.0"
+authors = ["a <a@be.com"]
+edition = "2018"
+license = "MIT"
+description = "fixture consumer with a normal dependency"
+repository = "github.com/paritytech/cargo-dragons"
+
+[dependencies]
+cycle-helper = { version = "0.1.0", path = "../cycle-helper" }
