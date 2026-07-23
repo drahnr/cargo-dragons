@@ -114,6 +114,7 @@ fn generated_workspace_cargo_dragons(
     let mut cmd = Command::cargo_bin("cargo-dragons")?;
     cmd.env("CARGO_HOME", cargo_home)
         .env("CARGO_NET_OFFLINE", "true")
+        .env("CRATES_TOKEN", "cargo-dragons-dummy-token")
         .arg("--manifest-path")
         .arg(manifest_path);
     Ok(cmd)
@@ -127,7 +128,7 @@ fn assert_dry_run_unleash_packages_generated_graph(
     write_graph_workspace(workspace.path(), packages)?;
 
     let mut cmd = generated_workspace_cargo_dragons(workspace.path(), cargo_home.path())?;
-    cmd.arg("unleash").arg("--dry-run").arg("--no-check");
+    cmd.arg("unleash").arg("--dry-run").arg("--skip-verify");
 
     let assert = cmd.assert().success();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
@@ -159,7 +160,7 @@ fn assert_dry_run_unleash_rejects_generated_cycle(
     write_graph_workspace(workspace.path(), packages)?;
 
     let mut cmd = generated_workspace_cargo_dragons(workspace.path(), cargo_home.path())?;
-    cmd.arg("unleash").arg("--dry-run").arg("--no-check");
+    cmd.arg("unleash").arg("--dry-run").arg("--skip-verify");
 
     cmd.assert()
         .failure()
@@ -300,6 +301,24 @@ fn dry_run_unleash_rejects_larger_circular_release_graph() -> Result<(), Box<dyn
 }
 
 #[test]
+fn dry_run_unleash_requires_login() -> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("include-pre")?;
+
+    let mut cmd = ws.cargo_dragons()?;
+    cmd.env_remove("CRATES_TOKEN")
+        .arg("unleash")
+        .arg("--dry-run")
+        .arg("--skip-verify");
+
+    cmd.assert()
+        .failure()
+        .stderr(contains("Not logged in to crates.io"))
+        .stderr(contains("cargo login"))
+        .stderr(contains("CRATES_TOKEN"));
+    Ok(())
+}
+
+#[test]
 fn dry_run_unleash_lists_available_packages_and_exits_when_release_set_is_empty()
 -> Result<(), Box<dyn std::error::Error>> {
     let ws = TestWorkspace::from_fixture("simple-base")?;
@@ -308,7 +327,7 @@ fn dry_run_unleash_lists_available_packages_and_exits_when_release_set_is_empty(
     add_publish_false(&ws, "crateC/Cargo.toml")?;
 
     let mut cmd = ws.cargo_dragons()?;
-    cmd.arg("unleash").arg("--dry-run").arg("--no-check");
+    cmd.arg("unleash").arg("--dry-run").arg("--skip-verify");
 
     cmd.assert()
         .success()
@@ -333,13 +352,58 @@ fn dry_run_unleash_packages_workspace_dependencies() -> Result<(), Box<dyn std::
         .arg("cu-left-pad")
         .arg("--include-pre-deps")
         .arg("--dry-run")
-        .arg("--no-check");
+        .arg("--skip-verify");
 
     cmd.assert()
         .success()
         .stderr(contains("Dry-run packaging"))
         .stderr(contains("unicode-width"))
         .stderr(contains("cu-left-pad"));
+    Ok(())
+}
+
+#[test]
+fn dry_run_unleash_packages_self_by_default() -> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("include-pre")?;
+
+    let mut cmd = ws.cargo_dragons()?;
+    cmd.arg("unleash")
+        .arg("--packages")
+        .arg("crate-a")
+        .arg("--include-pre-deps")
+        .arg("--dry-run")
+        .arg("--skip-verify");
+
+    cmd.assert()
+        .success()
+        .stderr(contains("Dry-run packaging"))
+        .stderr(contains("Would package"))
+        .stderr(contains("crate-a v"))
+        .stderr(contains("cu-left-pad"));
+    Ok(())
+}
+
+#[test]
+fn dry_run_unleash_without_self_packages_only_dependencies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("include-pre")?;
+
+    let mut cmd = ws.cargo_dragons()?;
+    cmd.arg("unleash")
+        .arg("--packages")
+        .arg("crate-a")
+        .arg("--include-pre-deps")
+        .arg("--without-self")
+        .arg("--dry-run")
+        .arg("--skip-verify");
+
+    cmd.assert()
+        .success()
+        .stderr(contains("Dry-run packaging"))
+        .stderr(contains("Would package"))
+        .stderr(contains("cu-left-pad"))
+        .stderr(contains("crate-a v").not())
+        .stderr(contains("Checking Packages").not());
     Ok(())
 }
 
@@ -360,6 +424,7 @@ fn dry_run_unleash_allows_unpublished_workspace_pre_release_dependencies()
 
     cmd.assert()
         .success()
+        .stderr(contains("Checking Packages"))
         .stderr(contains("Dry-run packaging"))
         .stderr(contains("Would package"))
         .stderr(contains("unicode-width"))

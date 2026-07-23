@@ -7,7 +7,7 @@ use cargo_credential::Secret;
 use cargo_util_terminal::{Shell, Verbosity};
 use regex::Regex;
 use semver::Version;
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{collections::HashSet, fs, path::PathBuf, str::FromStr};
 use toml_edit::Value;
 
 use crate::{
@@ -17,8 +17,6 @@ use crate::{
         make_pkg_predicate, members_deep,
     },
 };
-
-pub(crate) const PACKAGE_LIST_SENTINEL: &str = "__cargo_dragons_list_packages__";
 
 fn parse_regex(src: &str) -> Result<Regex, anyhow::Error> {
     Regex::new(src).context("Parsing Regex failed")
@@ -43,6 +41,45 @@ fn package_list_with_versions(packages: &[Package]) -> String {
             .map(|p| format!("{} ({})", p.name(), p.version())),
     )
     .join(", ")
+}
+
+fn print_available_packages(gctx: &GlobalContext, ws: &Workspace<'_>) {
+    for name in available_package_names(gctx, ws) {
+        println!("{name}");
+    }
+}
+
+fn version_command_pkg_opts(cmd: &VersionCommand) -> Option<&PackageSelectOptions> {
+    Some(match cmd {
+        VersionCommand::Release { pkg_opts, .. }
+        | VersionCommand::BumpBreaking { pkg_opts, .. }
+        | VersionCommand::BumpToDev { pkg_opts, .. }
+        | VersionCommand::BumpPre { pkg_opts, .. }
+        | VersionCommand::BumpPatch { pkg_opts, .. }
+        | VersionCommand::BumpMinor { pkg_opts, .. }
+        | VersionCommand::BumpMajor { pkg_opts, .. }
+        | VersionCommand::Set { pkg_opts, .. }
+        | VersionCommand::SetPre { pkg_opts, .. }
+        | VersionCommand::SetBuild { pkg_opts, .. } => pkg_opts,
+    })
+}
+
+fn command_pkg_opts(cmd: &Command) -> Option<&PackageSelectOptions> {
+    match cmd {
+        Command::Set { pkg_opts, .. }
+        | Command::AddOwner { pkg_opts, .. }
+        | Command::CleanDeps { pkg_opts, .. }
+        | Command::DeDevDeps { pkg_opts }
+        | Command::ToRelease { pkg_opts, .. }
+        | Command::Check { pkg_opts, .. }
+        | Command::Unleash { pkg_opts, .. }
+        | Command::UnifyDeps { pkg_opts }
+        | Command::IndependenceCheck { pkg_opts, .. } => Some(pkg_opts),
+        #[cfg(feature = "gen-readme")]
+        Command::GenReadme { pkg_opts, .. } => Some(pkg_opts),
+        Command::Version { cmd } => version_command_pkg_opts(cmd),
+        Command::Completions { .. } | Command::Rename { .. } => None,
+    }
 }
 
 fn report_already_published_versions(
@@ -103,24 +140,24 @@ pub enum GenerateReadmeMode {
 
 #[derive(clap::Parser, Debug)]
 pub struct PackageSelectOptions {
-    /// Only use the specfic set of packages
+    /// Only use the specific set of packages.
     ///
-    /// Apply only to the packages named as defined. This is mutually exclusive with skip and
-    /// ignore-version-pre.
-    #[clap(short, long, value_parser = parse_regex, num_args = 0..=1, default_missing_value = "__cargo_dragons_list_packages__")]
+    /// Accepts repeated flags (`-p a -p b`) and comma-separated values (`-p a,b`). This is
+    /// mutually exclusive with skip and ignore-version-pre.
+    #[clap(short, long, value_parser = parse_regex, value_delimiter = ',')]
     pub packages: Vec<Regex>,
 
     /// Skip the package names matching ...
     ///
     /// Provide one or many regular expression that, if the package name matches, means we skip
-    /// that package. Mutually exclusive with `--package`
+    /// that package. Mutually exclusive with `--packages`
     #[clap(short, long, value_parser = parse_regex)]
     pub skip: Vec<Regex>,
 
     /// Ignore version pre-releases
     ///
     /// Skip if the SemVer pre-release field is any of the listed. Mutually exclusive with
-    /// `--package`
+    /// `--packages`
     #[clap(short, long)]
     pub ignore_pre_version: Vec<String>,
 
@@ -144,6 +181,38 @@ pub struct PackageSelectOptions {
     /// Even if not selected by default, also include depedencies with a pre (cascading)
     #[clap(long)]
     pub include_pre_deps: bool,
+
+    /// List available packages and exit.
+    #[clap(long)]
+    pub list_packages: bool,
+}
+
+#[derive(clap::Parser, Debug)]
+pub struct ReleasePlanOptions {
+    /// Consider no package matching the criteria an error
+    #[arg(long)]
+    empty_package_is_failure: bool,
+
+    /// Write a graphviz dot file to the given destination
+    #[arg(long = "dot-graph")]
+    dot_graph: Option<PathBuf>,
+}
+
+#[derive(clap::Parser, Debug)]
+pub struct VerificationOptions {
+    /// Actually build the package during verification.
+    ///
+    /// By default, this only runs `cargo check` against the package build. Set this flag to have it
+    /// run an actual `build` instead.
+    #[arg(long)]
+    build: bool,
+
+    /// Generate & verify whether the Readme file has changed.
+    ///
+    /// When enabled, this will generate a Readme file from the crate's doc comments (using
+    /// cargo-readme), and check whether the existing Readme (if any) matches.
+    #[arg(long)]
+    check_readme: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -321,9 +390,19 @@ pub enum Command {
         pkg_opts: PackageSelectOptions,
         /// Do only check if you'd clean up.
         ///
-        /// Abort if you found unused dependencies
-        #[arg(long = "check")]
+        /// Abort if you found unused dependencies. `--check` is kept as a backwards-compatible
+        /// alias for `--check-only`.
+        #[arg(long = "check-only", alias = "check")]
         check_only: bool,
+    },
+    /// Deprecated: deactivate `[dev-dependencies]` in matching package manifests.
+    ///
+    /// This mutates manifests in-place and is kept only for compatibility. Prefer `check` or
+    /// `unleash`, which perform release verification without relying on this standalone step.
+    #[command(name = "de-dev-deps")]
+    DeDevDeps {
+        #[command(flatten)]
+        pkg_opts: PackageSelectOptions,
     },
     /// Calculate the packages and the order in which to release
     ///
@@ -332,14 +411,8 @@ pub enum Command {
     ToRelease {
         #[command(flatten)]
         pkg_opts: PackageSelectOptions,
-        /// Consider no package matching the criteria an error
-        #[arg(long)]
-        empty_package_is_failure: bool,
-
-        /// Write a graphviz dot of all crates to be release and their dependency relation
-        /// to the given path.
-        #[arg(long = "dot-graph")]
-        dot_graph: Option<PathBuf>,
+        #[command(flatten)]
+        release_opts: ReleasePlanOptions,
     },
     /// Check whether crates can be packaged
     ///
@@ -348,26 +421,10 @@ pub enum Command {
     Check {
         #[command(flatten)]
         pkg_opts: PackageSelectOptions,
-        /// Actually build the package
-        ///
-        /// By default, this only runs `cargo check` against the package
-        /// build. Set this flag to have it run an actual `build` instead.
-        #[arg(long)]
-        build: bool,
-        /// Generate & verify whether the Readme file has changed.
-        ///
-        /// When enabled, this will generate a Readme file from
-        /// the crate's doc comments (using cargo-readme), and
-        /// check whether the existing Readme (if any) matches.
-        #[arg(long)]
-        check_readme: bool,
-        /// Consider no package matching the criteria an error
-        #[arg(long)]
-        empty_package_is_failure: bool,
-
-        /// Write a graphviz dot file to the given destination
-        #[arg(long = "dot-graph")]
-        dot_graph: Option<PathBuf>,
+        #[command(flatten)]
+        verify_opts: VerificationOptions,
+        #[command(flatten)]
+        release_opts: ReleasePlanOptions,
     },
     /// Generate Readme files
     ///
@@ -393,18 +450,24 @@ pub enum Command {
     Unleash {
         #[command(flatten)]
         pkg_opts: PackageSelectOptions,
-        /// Actually build the package in check
-        ///
-        /// By default, this only runs `cargo check` against the package
-        /// build. Set this flag to have it run an actual `build` instead.
-        #[arg(long)]
-        build: bool,
+        #[command(flatten)]
+        verify_opts: VerificationOptions,
+        #[command(flatten)]
+        release_opts: ReleasePlanOptions,
         /// dry run
         #[arg(long)]
         dry_run: bool,
-        /// dry run
-        #[arg(long)]
+        /// Skip package verification before release.
+        ///
+        /// By default, verification runs even with `--dry-run`. `--no-check` is kept as a
+        /// backwards-compatible alias for `--skip-verify`.
+        #[arg(long = "skip-verify", alias = "no-check")]
         no_check: bool,
+        /// Do not publish explicitly selected packages themselves; publish only selected dependencies.
+        ///
+        /// By default, packages selected with `-p/--packages` are published too.
+        #[arg(long)]
+        without_self: bool,
         /// Ensure we have the owner set as well
         #[arg(long = "owner")]
         add_owner: Option<String>,
@@ -414,20 +477,6 @@ pub enum Command {
         /// back to the default value provided in the user directory
         #[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
         token: Option<String>,
-        /// Generate & verify whether the Readme file has changed.
-        ///
-        /// When enabled, this will generate a Readme file from
-        /// the crate's doc comments (using cargo-readme), and
-        /// check whether the existing Readme (if any) matches.
-        #[arg(long)]
-        check_readme: bool,
-        /// Consider no package matching the criteria an error
-        #[arg(long)]
-        empty_package_is_failure: bool,
-
-        /// Write a graphviz dot file to the given destination
-        #[arg(long = "dot-graph")]
-        dot_graph: Option<PathBuf>,
     },
     /// Unify all dependencies to those used in the workspace
     /// and suggest additional ones.
@@ -540,6 +589,11 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 
     let mut ws = Workspace::new(&root_manifest, &gctx).context("Reading workspace failed")?;
 
+    if command_pkg_opts(&args.cmd).is_some_and(|pkg_opts| pkg_opts.list_packages) {
+        print_available_packages(&gctx, &ws);
+        return Ok(());
+    }
+
     //TODO: Seperate matching from Command implementations to make this a more readable codebase
     match args.cmd {
         Command::Completions { shell } => {
@@ -555,6 +609,13 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         } => {
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
             commands::clean_up_unused_dependencies(&gctx, &ws, predicate, check_only)
+        }
+        Command::DeDevDeps { pkg_opts } => {
+            gctx.shell().warn(
+                "`de-dev-deps` is deprecated; prefer `check` or `unleash` for release verification.",
+            )?;
+            let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+            commands::deactivate_dev_dependencies(ws.members().filter(|p| predicate(p)))
         }
         Command::AddOwner {
             owner,
@@ -612,8 +673,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         }
         Command::ToRelease {
             pkg_opts,
-            empty_package_is_failure,
-            dot_graph,
+            release_opts,
         } => {
             let available_packages = pkg_opts
                 .packages
@@ -621,12 +681,12 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
                 .then(|| available_package_names(&gctx, &ws));
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-            let plan = commands::release_plan(&gctx, &ws, predicate, dot_graph)?;
+            let plan = commands::release_plan(&gctx, &ws, predicate, release_opts.dot_graph)?;
             if handle_empty_release_plan(
                 &gctx,
                 &plan.to_release,
                 &plan.already_published,
-                empty_package_is_failure,
+                release_opts.empty_package_is_failure,
                 available_packages.as_deref(),
             )? {
                 return Ok(());
@@ -637,13 +697,11 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             Ok(())
         }
         Command::Check {
-            build,
             pkg_opts,
-            check_readme,
-            empty_package_is_failure,
-            dot_graph,
+            verify_opts,
+            release_opts,
         } => {
-            if check_readme {
+            if verify_opts.check_readme {
                 verify_readme_feature()?;
             }
 
@@ -653,18 +711,24 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
                 .then(|| available_package_names(&gctx, &ws));
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-            let plan = commands::release_plan(&gctx, &ws, predicate, dot_graph)?;
+            let plan = commands::release_plan(&gctx, &ws, predicate, release_opts.dot_graph)?;
             if handle_empty_release_plan(
                 &gctx,
                 &plan.to_release,
                 &plan.already_published,
-                empty_package_is_failure,
+                release_opts.empty_package_is_failure,
                 available_packages.as_deref(),
             )? {
                 return Ok(());
             }
 
-            commands::check_packages(&gctx, &plan.to_release, &ws, build, check_readme)
+            commands::check_packages(
+                &gctx,
+                &plan.to_release,
+                &ws,
+                verify_opts.build,
+                verify_opts.check_readme,
+            )
         }
         #[cfg(feature = "gen-readme")]
         Command::GenReadme {
@@ -697,45 +761,98 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             no_check,
             token,
             add_owner,
-            build,
+            verify_opts,
+            release_opts,
             pkg_opts,
-            check_readme,
-            empty_package_is_failure,
-            dot_graph,
+            without_self,
         } => {
+            gctx.shell().status("Checking", "crates.io login")?;
+            let token = get_token(token.map(Secret::from))?;
+            if token.is_none() {
+                anyhow::bail!(
+                    "Not logged in to `crates.io`.\
+                    Run `cargo login` or provide a token with `--token`/`CRATES_TOKEN`\
+                    before running `cargo dragons unleash` (including `--dry-run`)."
+                );
+            }
+
+            let explicitly_selected = (!pkg_opts.packages.is_empty())
+                .then(|| {
+                    HashSet::from_iter(members_deep(&gctx, &ws).into_iter().filter_map(|package| {
+                        pkg_opts
+                            .packages
+                            .iter()
+                            .any(|selector| selector.is_match(&package.name()))
+                            .then(|| package.name().as_str().to_owned())
+                    }))
+                })
+                .unwrap_or_default();
             let available_packages = pkg_opts
                 .packages
                 .is_empty()
                 .then(|| available_package_names(&gctx, &ws));
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-            let plan = commands::release_plan(&gctx, &ws, predicate, dot_graph)?;
+            let plan = commands::release_plan(&gctx, &ws, predicate, release_opts.dot_graph)?;
             if handle_empty_release_plan(
                 &gctx,
                 &plan.to_release,
                 &plan.already_published,
-                empty_package_is_failure,
+                release_opts.empty_package_is_failure,
                 available_packages.as_deref(),
             )? {
                 return Ok(());
             }
-            let packages = plan.to_release;
 
-            // Dry-run should only report the planned release set. Cargo's package verification
-            // strips path dependencies and checks crates.io, which rejects unpublished local
-            // release candidates that are meant to be published together.
-            if !no_check && !dry_run {
-                if check_readme {
+            let mut packages = plan.to_release;
+            if !explicitly_selected.is_empty() {
+                let to_release = HashSet::<String>::from_iter(
+                    packages
+                        .iter()
+                        .map(|package| package.name().as_str().to_owned()),
+                );
+
+                if without_self {
+                    packages
+                        .retain(|package| !explicitly_selected.contains(package.name().as_str()));
+                } else if explicitly_selected.is_disjoint(&to_release) && !packages.is_empty() {
+                    let mut selected = explicitly_selected.iter().cloned().collect::<Vec<_>>();
+                    selected.sort();
+                    anyhow::bail!(
+                        "Refusing to unleash only dependencies. \
+                        None of the explicitly selected package(s) are in the release set: {}.\
+                        Bump their version if they should be published, or run again with `--without-self`\
+                        if you only intended to publish dependencies.",
+                        selected.join(", ")
+                    );
+                }
+            }
+
+            if handle_empty_package_is_failures_with_available(
+                &packages,
+                release_opts.empty_package_is_failure,
+                available_packages.as_deref(),
+            )? {
+                return Ok(());
+            }
+
+            if !no_check {
+                if verify_opts.check_readme {
                     verify_readme_feature()?;
                 }
 
-                commands::check_packages(&gctx, &packages, &ws, build, check_readme)?;
+                commands::check_packages(
+                    &gctx,
+                    &packages,
+                    &ws,
+                    verify_opts.build,
+                    verify_opts.check_readme,
+                )?;
             }
 
             gctx.shell()
                 .status("Releasing", package_list_with_versions(&packages))?;
 
-            let token = get_token(token.map(Secret::from))?;
             commands::release(&gctx, packages, ws, dry_run, token, add_owner)
         }
         Command::IndependenceCheck {

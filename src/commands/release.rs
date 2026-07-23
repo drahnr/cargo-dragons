@@ -121,7 +121,7 @@ pub fn release(
         drop(opts);
 
         gctx.shell()
-            .status("Dry run packaging (🏜️):", packages.len())?;
+            .status("Dry-run packaging (🏜️):", packages.len())?;
         for pkg in packages {
             gctx.shell().status("Would package (🏜️)", &pkg)?;
         }
@@ -132,19 +132,6 @@ pub fn release(
     let reloaded_ws = Workspace::new(ws.root_manifest(), gctx)?;
     let packages = reload_packages_from_worktree(gctx, &reloaded_ws, &packages)?;
 
-    let opts = PublishOpts {
-        gctx,
-        verify: false,
-        token: token.clone(),
-        dry_run: false,
-        allow_dirty: true,
-        jobs: None,
-        to_publish: ops::Packages::Default,
-        targets: Default::default(),
-        cli_features,
-        keep_going: false,
-        reg_or_index: None,
-    };
     let delay = {
         if packages.len() > 29 {
             // more than 30, delay so we do not publish more than 30 in 10min.
@@ -168,6 +155,19 @@ pub fn release(
         }
 
         let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
+        let opts = PublishOpts {
+            gctx,
+            verify: false,
+            token: token.clone(),
+            dry_run: false,
+            allow_dirty: true,
+            jobs: None,
+            to_publish: ops::Packages::Packages(vec![pkg.name().as_str().to_owned()]),
+            targets: Default::default(),
+            cli_features: cli_features.clone(),
+            keep_going: false,
+            reg_or_index: None,
+        };
         gctx.shell().status("Publishing (🚂🚃🚃)", pkg)?;
         publish(&pkg_ws, &opts)?;
         if let Some(ref o) = owner {

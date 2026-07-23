@@ -143,22 +143,33 @@ fn no_package_selector_lists_available_packages_when_release_set_is_empty()
 }
 
 #[test]
-fn empty_package_selector_lists_available_packages() -> Result<(), Box<dyn std::error::Error>> {
+fn list_packages_lists_available_packages() -> Result<(), Box<dyn std::error::Error>> {
     let ws = TestWorkspace::from_fixture("include-pre")?;
 
     let mut cmd = ws.cargo_dragons()?;
-    cmd.arg("to-release").arg("--packages");
+    cmd.arg("to-release").arg("--list-packages");
 
     cmd.assert()
-        .failure()
-        .stderr(contains("No package selector provided"))
-        .stderr(contains("Available packages"))
-        .stderr(contains("\u{1b}[1mcrate-a"))
-        .stderr(contains("crate-a"))
-        .stderr(contains("cu-left-pad"))
-        .stderr(contains("unicode-width"))
-        .stderr(contains("How to fix:"))
-        .stderr(contains("--packages <name>"));
+        .success()
+        .stdout(contains("crate-a"))
+        .stdout(contains("cu-left-pad"))
+        .stdout(contains("unicode-width"))
+        .stderr(contains("No package selector provided").not());
+    Ok(())
+}
+
+#[test]
+fn comma_separated_packages_are_selected() -> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("simple-base")?;
+
+    let mut cmd = ws.cargo_dragons()?;
+    cmd.arg("to-release").arg("-p").arg("crateA,crateC");
+
+    cmd.assert()
+        .success()
+        .stdout(contains("crateA (0.1.0)"))
+        .stdout(contains("crateC (3.1.0)"))
+        .stdout(contains("crateB").not());
     Ok(())
 }
 

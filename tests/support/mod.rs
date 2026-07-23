@@ -33,6 +33,7 @@ impl TestWorkspace {
         let mut cmd = Command::cargo_bin("cargo-dragons")?;
         cmd.env("CARGO_HOME", self.cargo_home.path())
             .env("CARGO_NET_OFFLINE", "true")
+            .env("CRATES_TOKEN", "cargo-dragons-dummy-token")
             .arg("--manifest-path")
             .arg(self.path());
         Ok(cmd)

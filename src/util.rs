@@ -14,7 +14,7 @@ use std::{
 };
 use toml_edit::{DocumentMut, InlineTable, Item, Table, Value};
 
-use crate::cli::{PACKAGE_LIST_SENTINEL, PackageSelectOptions};
+use crate::cli::PackageSelectOptions;
 
 pub fn changed_packages(
     gctx: &GlobalContext,
@@ -439,20 +439,11 @@ pub(crate) fn make_pkg_predicate(
         ignore_publish,
         changed_since,
         include_pre_deps,
+        list_packages: _,
     } = args;
 
     let members = members_deep(gctx, ws);
     let available_packages = available_package_names(gctx, ws);
-
-    if packages
-        .iter()
-        .any(|selector| selector.as_str() == PACKAGE_LIST_SENTINEL)
-    {
-        anyhow::bail!(
-            "No package selector provided.\n\nAvailable packages (showing up to {MAX_AVAILABLE_PACKAGE_SUGGESTIONS}):\n{}\n\nHow to fix: pass a package name, for example `--packages <name>`.",
-            format_available_packages(None, &available_packages),
-        );
-    }
 
     if !packages.is_empty() {
         if !skip.is_empty() || !ignore_pre_version.is_empty() {
