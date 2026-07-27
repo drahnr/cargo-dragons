@@ -475,11 +475,10 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
 	gctx.values()?;
 	gctx.load_credentials()?;
 
-	let get_token = |t| -> Result<Option<Secret<String>>, anyhow::Error> {
+	let get_token = |t: Option<Secret<String>>| -> Result<Option<Secret<String>>, anyhow::Error> {
 		Ok(match t {
 			None => gctx
-				.get_string("registry.token")?
-				.map(|token_json_val| Secret::from(token_json_val.val)),
+				.get::<Option<Secret<String>>>("registry.token")?,
 			_ => t,
 		})
 	};
