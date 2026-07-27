@@ -64,7 +64,7 @@ where
 	F: Fn(&Package) -> bool,
 	D: Into<Option<PathBuf>>,
 {
-	let lock = gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::Shared)?;
+	let lock = gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::MutateExclusive)?;
 
 	// inspired by the work of `cargo-publish-all`: https://gitlab.com/torkleyy/cargo-publish-all
 	gctx.shell()
