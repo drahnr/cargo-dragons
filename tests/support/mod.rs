@@ -24,31 +24,14 @@ impl TestWorkspace {
         self.temp.path()
     }
 
-    #[allow(dead_code)]
-    pub fn read_to_string(&self, relative: impl AsRef<Path>) -> anyhow::Result<String> {
-        Ok(fs::read_to_string(self.path().join(relative))?)
-    }
-
     pub fn cargo_dragons(&self) -> anyhow::Result<Command> {
         let mut cmd = Command::cargo_bin("cargo-dragons")?;
         cmd.env("CARGO_HOME", self.cargo_home.path())
             .env("CARGO_NET_OFFLINE", "true")
-            .env("CRATES_TOKEN", "cargo-dragons-dummy-token")
+            .env("CARGO_REGISTRY_TOKEN", "cargo-dragons-dummy-token")
             .arg("--manifest-path")
             .arg(self.path());
         Ok(cmd)
-    }
-
-    #[allow(dead_code)]
-    pub fn package_version(&self, manifest: impl AsRef<Path>) -> anyhow::Result<String> {
-        let manifest = self.read_to_string(manifest)?;
-        let manifest: toml::Value = toml::from_str(&manifest)?;
-        let version = manifest
-            .get("package")
-            .and_then(|package| package.get("version"))
-            .and_then(toml::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("manifest does not contain package.version"))?;
-        Ok(version.to_owned())
     }
 }
 

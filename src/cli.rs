@@ -1,9 +1,10 @@
 use anyhow::Context;
 use cargo::{
     GlobalContext,
-    core::{Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
+    core::{SourceId, Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
+    util::{auth, context::homedir},
 };
-use cargo_credential::Secret;
+use cargo_credential::{Operation, Secret};
 use cargo_util_terminal::{Shell, Verbosity};
 use regex::Regex;
 use semver::Version;
@@ -379,9 +380,9 @@ pub enum Command {
         owner: String,
         /// the crates.io token to use for API access
         ///
-        /// If this is nor the environment variable are set, this falls
-        /// back to the default value provided in the user directory
-        #[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
+        /// If neither this nor Cargo's native token environment variable is set,
+        /// this falls back to the default value provided in the user directory.
+        #[arg(long, env = "CARGO_REGISTRY_TOKEN", hide_env_values = true)]
         token: Option<String>,
     },
     /// Check the package(s) for unused dependencies
@@ -473,9 +474,9 @@ pub enum Command {
         add_owner: Option<String>,
         /// the crates.io token to use for uploading
         ///
-        /// If this is nor the environment variable are set, this falls
-        /// back to the default value provided in the user directory
-        #[arg(long, env = "CRATES_TOKEN", hide_env_values = true)]
+        /// If neither this nor Cargo's native token environment variable is set,
+        /// this falls back to the default value provided in the user directory.
+        #[arg(long, env = "CARGO_REGISTRY_TOKEN", hide_env_values = true)]
         token: Option<String>,
     },
     /// Unify all dependencies to those used in the workspace
@@ -551,24 +552,37 @@ fn verify_readme_feature() -> anyhow::Result<()> {
     }
 }
 
+fn ensure_crates_io_login(
+    gctx: &GlobalContext,
+    token: Option<&Secret<String>>,
+) -> Result<(), anyhow::Error> {
+    let source_id = SourceId::crates_io(gctx)?;
+    if let Some(token) = token {
+        // Seeds Cargo's in-memory credential cache for this process; this does not
+        // persist or overwrite the user's credentials.toml.
+        auth::cache_token_from_commandline(gctx, &source_id, Secret::as_deref(token));
+    }
+
+    auth::auth_token(gctx, &source_id, None, Operation::Read, Vec::new(), false)
+        .map(|_| ())
+        .with_context(|| {
+            "Not logged in to crates.io. Run `cargo login` or provide a token with \
+            `--token`/`CARGO_REGISTRY_TOKEN` before running `cargo dragons unleash` \
+            (including `--dry-run`)."
+        })
+}
+
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Args) -> Result<(), anyhow::Error> {
     pretty_env_logger::init();
 
-    let gctx = GlobalContext::new(
-        Shell::new(),
-        args.manifest_path.parent().unwrap().to_path_buf(),
-        dirs::home_dir().unwrap(),
-    );
+    let cwd = args.manifest_path.parent().unwrap().to_path_buf();
+    let cargo_home = homedir(&cwd).context(
+        "Cargo couldn't find your home directory. This probably means that $HOME was not set.",
+    )?;
+    let gctx = GlobalContext::new(Shell::new(), cwd, cargo_home);
     gctx.values()?;
     gctx.load_credentials()?;
-
-    let get_token = |t: Option<Secret<String>>| -> Result<Option<Secret<String>>, anyhow::Error> {
-        Ok(match t {
-            None => gctx.get::<Option<Secret<String>>>("registry.token")?,
-            _ => t,
-        })
-    };
 
     gctx.shell().set_verbosity(
         match args.verbosity.log_level().unwrap_or(log::Level::Error) {
@@ -622,7 +636,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             token,
             pkg_opts,
         } => {
-            let token = get_token(token.map(Secret::from))?;
+            let token = token.map(Secret::from);
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
             for pkg in ws.members().filter(|p| predicate(p)) {
@@ -767,14 +781,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             without_self,
         } => {
             gctx.shell().status("Checking", "crates.io login")?;
-            let token = get_token(token.map(Secret::from))?;
-            if token.is_none() {
-                anyhow::bail!(
-                    "Not logged in to `crates.io`.\
-                    Run `cargo login` or provide a token with `--token`/`CRATES_TOKEN`\
-                    before running `cargo dragons unleash` (including `--dry-run`)."
-                );
-            }
+            let token = token.map(Secret::from);
+            ensure_crates_io_login(&gctx, token.as_ref())?;
 
             let explicitly_selected = (!pkg_opts.packages.is_empty())
                 .then(|| {

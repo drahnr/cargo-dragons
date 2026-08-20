@@ -37,7 +37,6 @@ petgraph = "0.8.3"
 regex = "1.13.0"
 anyhow = "1.0.103"
 itertools = "0.15.0"
-dirs = "6.0.0"
 
 # Cargo implementation APIs: update and pin these as a unit.
 cargo = { version = "=0.98.0", features = [] }

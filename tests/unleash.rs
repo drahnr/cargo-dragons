@@ -114,7 +114,7 @@ fn generated_workspace_cargo_dragons(
     let mut cmd = Command::cargo_bin("cargo-dragons")?;
     cmd.env("CARGO_HOME", cargo_home)
         .env("CARGO_NET_OFFLINE", "true")
-        .env("CRATES_TOKEN", "cargo-dragons-dummy-token")
+        .env("CARGO_REGISTRY_TOKEN", "cargo-dragons-dummy-token")
         .arg("--manifest-path")
         .arg(manifest_path);
     Ok(cmd)
@@ -305,7 +305,10 @@ fn dry_run_unleash_requires_login() -> Result<(), Box<dyn std::error::Error>> {
     let ws = TestWorkspace::from_fixture("include-pre")?;
 
     let mut cmd = ws.cargo_dragons()?;
-    cmd.env_remove("CRATES_TOKEN")
+    // cargo-dragons intentionally uses Cargo's native crates.io token env var
+    // instead of a custom alias. Clear it so this missing-login test remains
+    // hermetic even on machines that export Cargo credentials.
+    cmd.env_remove("CARGO_REGISTRY_TOKEN")
         .arg("unleash")
         .arg("--dry-run")
         .arg("--skip-verify");
@@ -314,7 +317,33 @@ fn dry_run_unleash_requires_login() -> Result<(), Box<dyn std::error::Error>> {
         .failure()
         .stderr(contains("Not logged in to crates.io"))
         .stderr(contains("cargo login"))
-        .stderr(contains("CRATES_TOKEN"));
+        .stderr(contains("CARGO_REGISTRY_TOKEN"));
+    Ok(())
+}
+
+#[test]
+fn dry_run_unleash_accepts_token_without_rewriting_credentials()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("include-pre")?;
+    let cargo_home = TempDir::new()?;
+    let credentials = cargo_home.path().join("credentials.toml");
+    let existing_credentials = "[registries.other]\ntoken = \"keep-me\"\n";
+    fs::write(&credentials, existing_credentials)?;
+
+    let mut cmd = ws.cargo_dragons()?;
+    cmd.env("CARGO_HOME", cargo_home.path())
+        .env_remove("CARGO_REGISTRY_TOKEN")
+        .arg("unleash")
+        .arg("--token")
+        .arg("cargo-dragons-dummy-token")
+        .arg("--dry-run")
+        .arg("--skip-verify");
+
+    cmd.assert()
+        .success()
+        .stderr(contains("Dry-run packaging"))
+        .stderr(contains("Would package"));
+    assert_eq!(fs::read_to_string(credentials)?, existing_credentials);
     Ok(())
 }
 

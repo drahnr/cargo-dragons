@@ -23,14 +23,9 @@ lazy_static! {
 }
 
 #[derive(Debug)]
-pub enum CheckReadmeResult {
-    #[allow(dead_code)]
-    Skipped,
+enum CheckReadmeResult {
     Missing,
-    #[allow(dead_code)]
     UpdateNeeded,
-    #[allow(dead_code)]
-    UpToDate,
 }
 
 impl Display for CheckReadmeResult {
@@ -39,10 +34,8 @@ impl Display for CheckReadmeResult {
             f,
             "{}",
             match self {
-                Self::Skipped => "Skipped",
                 Self::Missing => "Missing",
                 Self::UpdateNeeded => "Update needed",
-                Self::UpToDate => "Up-to-date",
             }
         )
     }

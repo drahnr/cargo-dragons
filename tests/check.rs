@@ -83,7 +83,7 @@ fn to_release_does_not_remove_dev_dependencies() -> Result<(), Box<dyn std::erro
         .code(0)
         .stdout(contains("cycle-helper (0.1.0), cycle-consumer (0.1.0)"));
 
-    let manifest = ws.read_to_string("cycle-helper/Cargo.toml")?;
+    let manifest = fs::read_to_string(ws.path().join("cycle-helper/Cargo.toml"))?;
     assert!(
         manifest.contains("[dev-dependencies]"),
         "to-release must not edit canonical manifests"
@@ -100,7 +100,7 @@ fn check_ignores_dev_dependency_back_edges() -> Result<(), Box<dyn std::error::E
 
     cmd.assert().success().code(0);
 
-    let manifest = ws.read_to_string("cycle-helper/Cargo.toml")?;
+    let manifest = fs::read_to_string(ws.path().join("cycle-helper/Cargo.toml"))?;
     assert!(
         manifest.contains("[dev-dependencies]"),
         "check must not edit canonical manifests"
