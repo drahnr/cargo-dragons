@@ -1,6 +1,6 @@
 [package]
 name = "cargo-dragons"
-version = "1.0.0-alpha.8"
+version = "1.0.0"
 authors = [
   "Bernhard Schuster <bernhard@ahoi.io>",
   "Benjamin Kampmann <ben@gnunicorn.org>",
