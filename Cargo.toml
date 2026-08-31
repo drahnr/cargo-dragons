@@ -6,7 +6,7 @@ authors = [
   "Benjamin Kampmann <ben@gnunicorn.org>",
 ]
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.96"
 license = "GPL-3.0"
 repository = "https://github.com/drahnr/cargo-dragons"
 description = "Tooling to manage releasing of crates in massiv workspaces/monorepos"
