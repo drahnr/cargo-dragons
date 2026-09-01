@@ -10,11 +10,12 @@ use log::{trace, warn};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::Path,
 };
 use toml_edit::{DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::cli::PackageSelectOptions;
+
+pub mod devdeps;
 
 pub fn changed_packages(
     gctx: &GlobalContext,
@@ -64,36 +65,6 @@ pub fn changed_packages(
     }
 
     Ok(packages)
-}
-
-/// Remove dev-dependency sections from a manifest.
-pub fn strip_dev_dependencies_from_manifest(manifest_path: &Path) -> anyhow::Result<()> {
-    let manifest = fs::read_to_string(manifest_path)
-        .with_context(|| format!("Could not read manifest at {}", manifest_path.display()))?;
-    let mut document = manifest
-        .parse::<DocumentMut>()
-        .with_context(|| format!("Could not parse manifest at {}", manifest_path.display()))?;
-
-    let mut changed = false;
-    let root = document.as_table_mut();
-    changed |= root.remove("dev-dependencies").is_some();
-    changed |= root.remove("dev_dependencies").is_some();
-
-    if let Some(targets) = root.get_mut("target").and_then(Item::as_table_mut) {
-        for (_, target) in targets.iter_mut() {
-            if let Some(target) = target.as_table_mut() {
-                changed |= target.remove("dev-dependencies").is_some();
-                changed |= target.remove("dev_dependencies").is_some();
-            }
-        }
-    }
-
-    if changed {
-        fs::write(manifest_path, document.to_string())
-            .with_context(|| format!("Could not write manifest at {}", manifest_path.display()))?;
-    }
-
-    Ok(())
 }
 
 pub fn members_deep(gctx: &GlobalContext, ws: &'_ Workspace) -> Vec<Package> {
@@ -563,6 +534,184 @@ pub(crate) fn make_pkg_predicate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn restoring_stripped_dev_dependencies_preserves_other_manifest_changes() -> anyhow::Result<()>
+    {
+        let temp = TempDir::new()?;
+        let manifest_path = temp.path().join("Cargo.toml");
+        fs::write(
+            &manifest_path,
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regular-helper = "1"
+
+# dev deps required by integration tests
+[dev-dependencies] # root dev table
+# keep this helper comment
+dev-helper = "1" # inline dev helper comment
+
+[target.'cfg(unix)'.dependencies]
+unix-regular = "1"
+
+# unix test-only deps
+[target.'cfg(unix)'.dev-dependencies] # target dev table
+# keep unix helper comment
+unix-dev-helper = "1" # inline target helper comment
+
+# target-triple test-only deps
+[target.'x86_64-unknown-linux-gnu'.dev-dependencies] # target triple dev table
+target-dev-helper = "1" # inline target triple helper comment
+
+# compound cfg test-only deps
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dev_dependencies] # compound cfg dev table
+compound-cfg-dev-helper = "1" # inline compound cfg helper comment
+"#,
+        )?;
+
+        let record_dir = temp
+            .path()
+            .join("target/cargo-dragons/dev-dependency-restore/test/0-demo");
+        let restore = devdeps::DevDependencyRestore::strip_manifest(&manifest_path, &record_dir)?;
+        let restore_file = record_dir.join(devdeps::DEV_DEPENDENCY_RESTORE_FILE);
+        assert!(restore_file.is_file());
+        let restore_contents = fs::read_to_string(&restore_file)?;
+        assert!(restore_contents.contains("dev-helper"));
+        assert!(restore_contents.contains("unix-dev-helper"));
+        assert!(restore_contents.contains("target-dev-helper"));
+        assert!(restore_contents.contains("compound-cfg-dev-helper"));
+        assert!(restore_contents.contains("dev deps required by integration tests"));
+        assert!(restore_contents.contains("root dev table"));
+        assert!(restore_contents.contains("keep this helper comment"));
+        assert!(restore_contents.contains("inline dev helper comment"));
+        assert!(restore_contents.contains("unix test-only deps"));
+        assert!(restore_contents.contains("target dev table"));
+        assert!(restore_contents.contains("keep unix helper comment"));
+        assert!(restore_contents.contains("inline target helper comment"));
+        assert!(restore_contents.contains("target-triple test-only deps"));
+        assert!(restore_contents.contains("target triple dev table"));
+        assert!(restore_contents.contains("inline target triple helper comment"));
+        assert!(restore_contents.contains("compound cfg test-only deps"));
+        assert!(restore_contents.contains("compound cfg dev table"));
+        assert!(restore_contents.contains("inline compound cfg helper comment"));
+        assert!(!restore_contents.contains("version ="));
+        assert!(!restore_contents.contains("regular-helper"));
+
+        let stripped = fs::read_to_string(&manifest_path)?;
+        assert!(!stripped.contains("[dev-dependencies]"));
+        assert!(!stripped.contains("dev-helper"));
+        assert!(!stripped.contains("[target.'cfg(unix)'.dev-dependencies]"));
+        assert!(!stripped.contains("unix-dev-helper"));
+        assert!(!stripped.contains("dev deps required by integration tests"));
+        assert!(!stripped.contains("inline dev helper comment"));
+        assert!(!stripped.contains("unix test-only deps"));
+        assert!(!stripped.contains("inline target helper comment"));
+        assert!(!stripped.contains("[target.'x86_64-unknown-linux-gnu'.dev-dependencies]"));
+        assert!(!stripped.contains("target-dev-helper"));
+        assert!(!stripped.contains("target-triple test-only deps"));
+        assert!(!stripped.contains("inline target triple helper comment"));
+        assert!(!stripped.contains("dev_dependencies]"));
+        assert!(!stripped.contains("compound-cfg-dev-helper"));
+        assert!(!stripped.contains("compound cfg test-only deps"));
+        assert!(!stripped.contains("inline compound cfg helper comment"));
+
+        fs::write(
+            &manifest_path,
+            stripped.replace("version = \"0.1.0\"", "version = \"0.2.0\""),
+        )?;
+
+        restore.restore()?;
+        assert!(!record_dir.exists());
+        let restored = fs::read_to_string(&manifest_path)?;
+        let restored_document: toml::Value = toml::from_str(&restored)?;
+        assert!(
+            restored_document
+                .get("target")
+                .and_then(|target| target.get("x86_64-unknown-linux-gnu"))
+                .and_then(|target| target.get("dev-dependencies"))
+                .and_then(|dependencies| dependencies.get("target-dev-helper"))
+                .is_some(),
+            "target-specific dev-dependencies should be restored under their target"
+        );
+        assert!(
+            restored_document
+                .get("target")
+                .and_then(|target| {
+                    target.get("cfg(all(target_os = \"linux\", target_arch = \"x86_64\"))")
+                })
+                .and_then(|target| target.get("dev_dependencies"))
+                .and_then(|dependencies| dependencies.get("compound-cfg-dev-helper"))
+                .is_some(),
+            "cfg-gated dev-dependencies should be restored under their cfg"
+        );
+        assert!(restored.contains("version = \"0.2.0\""));
+        assert!(restored.contains("[dev-dependencies]"));
+        assert!(restored.contains("dev-helper"));
+        assert!(restored.contains("dev deps required by integration tests"));
+        assert!(restored.contains("root dev table"));
+        assert!(restored.contains("keep this helper comment"));
+        assert!(restored.contains("inline dev helper comment"));
+        assert!(restored.contains("[target.'cfg(unix)'.dev-dependencies]"));
+        assert!(restored.contains("unix-dev-helper"));
+        assert!(restored.contains("unix test-only deps"));
+        assert!(restored.contains("target dev table"));
+        assert!(restored.contains("keep unix helper comment"));
+        assert!(restored.contains("inline target helper comment"));
+        assert!(restored.contains("target-dev-helper"));
+        assert!(restored.contains("target-triple test-only deps"));
+        assert!(restored.contains("target triple dev table"));
+        assert!(restored.contains("inline target triple helper comment"));
+        assert!(restored.contains("compound-cfg-dev-helper"));
+        assert!(restored.contains("compound cfg test-only deps"));
+        assert!(restored.contains("compound cfg dev table"));
+        assert!(restored.contains("inline compound cfg helper comment"));
+        assert!(restored.contains("[dependencies]"));
+        assert!(restored.contains("regular-helper"));
+        assert!(restored.contains("[target.'cfg(unix)'.dependencies]"));
+        assert!(restored.contains("unix-regular"));
+        Ok(())
+    }
+
+    #[test]
+    fn restoring_stripped_dev_dependencies_preserves_original_formatting() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let manifest_path = temp.path().join("Cargo.toml");
+        let original = r#"# Keep all spacing and comments exactly as written.
+[package] # package metadata
+name    =   "format-preserving" # package name
+version = "0.1.0"              # package version
+edition = "2021"
+
+[target . 'x86_64-unknown-linux-gnu' . dev-dependencies] # target-specific test dependencies
+# Preserve this intentionally odd blank-line gap too.
+
+
+target-helper   = { version = "1", features = [ "alpha", "beta" ] } # target helper
+
+[target .'cfg(all(target_os = "linux", target_arch = "x86_64"))' . dev_dependencies] # cfg-gated test dependencies
+# The cfg-gated dependency also has a deliberately separate comment.
+
+cfg-helper = {
+version = "2",
+default-features = false
+}
+"#;
+        fs::write(&manifest_path, original)?;
+
+        let record_dir = temp
+            .path()
+            .join("target/cargo-dragons/dev-dependency-restore/test/0-format-preserving");
+        let restore = devdeps::DevDependencyRestore::strip_manifest(&manifest_path, &record_dir)?;
+        restore.restore()?;
+
+        assert_eq!(fs::read_to_string(manifest_path)?, original);
+        Ok(())
+    }
 
     #[test]
     fn available_package_listing_is_bold_and_capped() {

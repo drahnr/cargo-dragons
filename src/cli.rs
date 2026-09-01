@@ -784,8 +784,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             let token = token.map(Secret::from);
             ensure_crates_io_login(&gctx, token.as_ref())?;
 
-            let explicitly_selected = (!pkg_opts.packages.is_empty())
-                .then(|| {
+            let explicitly_selected = if !pkg_opts.packages.is_empty() {
+                {
                     HashSet::from_iter(members_deep(&gctx, &ws).into_iter().filter_map(|package| {
                         pkg_opts
                             .packages
@@ -793,8 +793,10 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
                             .any(|selector| selector.is_match(&package.name()))
                             .then(|| package.name().as_str().to_owned())
                     }))
-                })
-                .unwrap_or_default();
+                }
+            } else {
+                Default::default()
+            };
             let available_packages = pkg_opts
                 .packages
                 .is_empty()

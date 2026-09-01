@@ -1,6 +1,6 @@
 #[cfg(feature = "gen-readme")]
 use crate::commands::readme;
-use crate::util::strip_dev_dependencies_from_manifest;
+use crate::util::devdeps::strip_dev_dependencies_from_manifest;
 
 use anyhow::Context;
 use cargo::{
@@ -517,6 +517,12 @@ unix-regular = "1"
 
 [target.'cfg(unix)'.dev-dependencies]
 unix-dev-helper = "1"
+
+[target.'x86_64-unknown-linux-gnu'.dev-dependencies]
+target-dev-helper = "1"
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dev_dependencies]
+compound-cfg-dev-helper = "1"
 "#,
         )?;
 
@@ -534,6 +540,10 @@ unix-dev-helper = "1"
         assert!(!manifest.contains("dev-helper"));
         assert!(!manifest.contains("[target.'cfg(unix)'.dev-dependencies]"));
         assert!(!manifest.contains("unix-dev-helper"));
+        assert!(!manifest.contains("[target.'x86_64-unknown-linux-gnu'.dev-dependencies]"));
+        assert!(!manifest.contains("target-dev-helper"));
+        assert!(!manifest.contains("dev_dependencies]"));
+        assert!(!manifest.contains("compound-cfg-dev-helper"));
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use crate::{commands::add_owner, util::strip_dev_dependencies_from_manifest};
+use crate::{commands::add_owner, util::devdeps::DevDependencyRestoreSession};
 use anyhow::Context;
 use cargo::{
     GlobalContext,
@@ -9,19 +9,6 @@ use cargo::{
 use cargo_credential::Secret;
 
 use std::{thread, time::Duration};
-
-fn drop_dev_dependencies_from_worktree(
-    gctx: &GlobalContext,
-    packages: &[Package],
-) -> anyhow::Result<()> {
-    gctx.shell()
-        .status("Dropping dev-dependencies", "worktree manifests")?;
-    for package in packages {
-        gctx.shell().status("Dropping dev-dependencies", package)?;
-        strip_dev_dependencies_from_manifest(package.manifest_path())?;
-    }
-    Ok(())
-}
 
 fn reload_package_from_worktree(
     gctx: &GlobalContext,
@@ -128,51 +115,69 @@ pub fn release(
         return Ok(());
     }
 
-    drop_dev_dependencies_from_worktree(gctx, &packages)?;
-    let reloaded_ws = Workspace::new(ws.root_manifest(), gctx)?;
-    let packages = reload_packages_from_worktree(gctx, &reloaded_ws, &packages)?;
-
-    let delay = {
-        if packages.len() > 29 {
-            // more than 30, delay so we do not publish more than 30 in 10min.
-            // 20 seconds per publish so wait 21 to ensure at least a package is done
-            21
-        } else {
-            // below the limit we just burst them out.
-            0
-        }
-    };
-
+    let target_dir = ws.target_dir();
+    let mut dev_dependency_restore =
+        DevDependencyRestoreSession::new(target_dir.as_path_unlocked());
     gctx.shell()
-        .status("Publishing (🚂🚃🚃):", packages.len())?;
-    for (idx, pkg) in packages.iter().enumerate() {
-        if idx > 0 && delay > 0 {
-            gctx.shell().status(
-                "Waiting",
-                "published 30 crates – API limits require us to wait in between.",
-            )?;
-            thread::sleep(Duration::from_secs(delay));
-        }
-
-        let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
-        let opts = PublishOpts {
-            gctx,
-            verify: false,
-            token: token.clone(),
-            dry_run: false,
-            allow_dirty: true,
-            jobs: None,
-            to_publish: ops::Packages::Packages(vec![pkg.name().as_str().to_owned()]),
-            targets: Default::default(),
-            cli_features: cli_features.clone(),
-            keep_going: false,
-            reg_or_index: None,
-        };
-        gctx.shell().status("Publishing (🚂🚃🚃)", pkg)?;
-        publish(&pkg_ws, &opts)?;
-        if let Some(ref o) = owner {
-            add_owner(gctx, pkg, o.clone(), token.clone())?;
-        }
+        .status("Dropping dev-dependencies", "worktree manifests")?;
+    for package in &packages {
+        let _ = gctx.shell().status("Dropping dev-dependencies", package);
+        dev_dependency_restore.strip_manifest(package.name().as_str(), package.manifest_path())?;
     }
-    Ok(())
+
+    let release_result = (|| -> Result<(), anyhow::Error> {
+        let reloaded_ws = Workspace::new(ws.root_manifest(), gctx)?;
+        let packages = reload_packages_from_worktree(gctx, &reloaded_ws, &packages)?;
+
+        let delay = {
+            if packages.len() > 29 {
+                // more than 30, delay so we do not publish more than 30 in 10min.
+                // 20 seconds per publish so wait 21 to ensure at least a package is done
+                21
+            } else {
+                // below the limit we just burst them out.
+                0
+            }
+        };
+
+        gctx.shell()
+            .status("Publishing (🚂🚃🚃):", packages.len())?;
+        for (idx, pkg) in packages.iter().enumerate() {
+            if idx > 0 && delay > 0 {
+                gctx.shell().status(
+                    "Waiting",
+                    "published 30 crates – API limits require us to wait in between.",
+                )?;
+                thread::sleep(Duration::from_secs(delay));
+            }
+
+            let pkg_ws = Workspace::ephemeral(pkg.clone(), gctx, Some(ws.target_dir()), true)?;
+            let opts = PublishOpts {
+                gctx,
+                verify: false,
+                token: token.clone(),
+                dry_run: false,
+                allow_dirty: true,
+                jobs: None,
+                to_publish: ops::Packages::Packages(vec![pkg.name().as_str().to_owned()]),
+                targets: Default::default(),
+                cli_features: cli_features.clone(),
+                keep_going: false,
+                reg_or_index: None,
+            };
+            gctx.shell().status("Publishing (🚂🚃🚃)", pkg)?;
+            publish(&pkg_ws, &opts)?;
+            if let Some(ref o) = owner {
+                add_owner(gctx, pkg, o.clone(), token.clone())?;
+            }
+        }
+        Ok(())
+    })();
+    let _ = gctx
+        .shell()
+        .status("Restoring dev-dependencies", "worktree manifests");
+    let restore_result = dev_dependency_restore.restore_all();
+
+    release_result?;
+    restore_result.context("Release succeeded, but restoring dev-dependencies failed")
 }
