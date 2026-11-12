@@ -1,6 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use super::check::{run_check_ephemeral, run_check_inplace};
+use crate::features::{CliFeatures, Features};
 use cargo::{
     GlobalContext,
     core::{Workspace, compiler::CompileMode, package::Package},
@@ -99,6 +100,16 @@ pub fn independence_check(
     )?;
 
     for package in packages.iter() {
+        let default_features = Vec::from_iter(
+            package
+                .summary()
+                .features()
+                .get("default")
+                .into_iter()
+                .flatten()
+                .map(ToString::to_string),
+        );
+
         for compile_mode in modes.iter() {
             // Get all unique feature combinations to ensure their compilation.
             let feature_permutations = Vec::from_iter(
@@ -115,21 +126,33 @@ pub fn independence_check(
             gctx.shell().status_with_color(
 				"Independence",
 				format!(
-					"{name} Checking compilation of these target permutations ({n}): {feature_permutations:?}"
+					"{name} Checking default configuration and these target permutations ({n}): {feature_permutations:?}"
 				),
 				&style_from_color(AnsiColor::Magenta),
 			)?;
 
             let compile_mode_str = compile_mode_to_string(compile_mode).unwrap();
             let context_str = context.to_string();
-            for features in feature_permutations.iter() {
+            let configurations = std::iter::once((&[] as &[String], true)).chain(
+                feature_permutations
+                    .iter()
+                    .map(|features| (features.as_slice(), false)),
+            );
+            for (requested_features, uses_default_features) in configurations {
+                let cli_features = CliFeatures::from_command_line(requested_features)?;
+                let features: Features = if uses_default_features {
+                    cli_features.with_default(package.summary().features().get("default"))
+                } else {
+                    cli_features.without_defaults()
+                };
                 gctx.shell().status_with_color(
                     format!("{context_str}/{compile_mode_str}"),
                     format!(
-                        "{} {} with features {:?}",
+                        "{} {} with features {:?} (default features {}; declared default features: {default_features:?})",
                         package.name(),
                         package.version(),
-                        features
+                        requested_features,
+                        if uses_default_features { "enabled" } else { "disabled" }
                     ),
                     &style_from_color(AnsiColor::Cyan),
                 )?;
@@ -155,11 +178,11 @@ pub fn independence_check(
                             opts,
                             *compile_mode,
                             &replace,
-                            features,
+                            &features,
                         )?;
                     }
                     IndependenceCtx::InPlace => {
-                        run_check_inplace(gctx, &ws, package, opts, *compile_mode, features)?;
+                        run_check_inplace(gctx, &ws, package, opts, *compile_mode, &features)?;
                     }
                 };
             }

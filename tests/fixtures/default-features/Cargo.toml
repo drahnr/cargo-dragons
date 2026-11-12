@@ -1,0 +1,14 @@
+[package]
+name = "default-features"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fixture requiring its default feature during compilation"
+repository = "https://example.invalid/cargo-dragons"
+
+[workspace]
+resolver = "2"
+
+[features]
+default = ["required"]
+required = []

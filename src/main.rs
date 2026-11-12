@@ -5,6 +5,7 @@
 use clap::Parser;
 mod cli;
 mod commands;
+mod features;
 mod util;
 
 #[cfg(test)]

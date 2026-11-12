@@ -1,6 +1,9 @@
 #[cfg(feature = "gen-readme")]
 use crate::commands::readme;
-use crate::util::devdeps::strip_dev_dependencies_from_manifest;
+use crate::{
+    features::{CliFeatures, Features},
+    util::devdeps::strip_dev_dependencies_from_manifest,
+};
 
 use anyhow::Context;
 use cargo::{
@@ -10,7 +13,7 @@ use cargo::{
         compiler::{BuildConfig, CompileMode, UserIntent},
         dependency::DepKind,
         package::Package,
-        resolver::features::CliFeatures,
+        resolver::features::CliFeatures as CargoCliFeatures,
     },
     ops::{self, PackageOpts, package},
     sources::{PathSource, source::Source},
@@ -127,7 +130,7 @@ fn write_patch_workspace_manifest(
 /// `package`: Information about the package to compile.
 /// `opts`: Options for the compilation
 /// `build_mode`: How to compile the package.
-/// `features`: The crate features which to enable. Aka `cargo t --features "feat0 feat1"`
+/// `features`: The consolidated feature selection for this package.
 ///
 /// # Returns:
 /// Ok, if the package has been successfully compiled.
@@ -138,7 +141,7 @@ pub(crate) fn run_check_inplace<'a>(
     package: &Package,
     opts: &PackageOpts<'_>,
     build_mode: CompileMode,
-    features: &[String],
+    features: &Features,
 ) -> anyhow::Result<Workspace<'a>> {
     let workspace = Workspace::new(ws.root_manifest(), gctx)?;
 
@@ -156,7 +159,7 @@ pub(crate) fn run_check_inplace<'a>(
                 user_intent(build_mode)?,
             )?,
             spec: ops::Packages::Packages(vec![explicit]),
-            cli_features: CliFeatures::from_command_line(features, false, true)?,
+            cli_features: features.to_cargo(),
             filter: ops::CompileFilter::Default {
                 required_features_filterable: true,
             },
@@ -178,7 +181,7 @@ pub(crate) fn run_check_ephemeral(
     opts: &PackageOpts<'_>,
     build_mode: CompileMode,
     replace: &HashMap<String, Replacement>,
-    features: &[String],
+    features: &Features,
 ) -> anyhow::Result<Package> {
     let pkg = package;
 
@@ -237,7 +240,7 @@ pub(crate) fn run_check_ephemeral(
                 user_intent(build_mode)?,
             )?,
             spec: ops::Packages::Packages(vec![explicit]),
-            cli_features: CliFeatures::from_command_line(features, false, false)?,
+            cli_features: features.to_cargo(),
             filter: ops::CompileFilter::Default {
                 required_features_filterable: true,
             },
@@ -361,7 +364,7 @@ pub fn check_packages(
         jobs: None,
         to_package: ops::Packages::Default,
         targets: Default::default(),
-        cli_features: CliFeatures {
+        cli_features: CargoCliFeatures {
             features: Default::default(),
             all_features: false,
             uses_default_features: true,
@@ -448,15 +451,10 @@ pub fn check_packages(
         };
 
         gctx.shell().status("Verfying", pkg)?;
-        let new_pkg = run_check_ephemeral(
-            gctx,
-            pkg,
-            &rw_lock,
-            &opts,
-            build_mode,
-            &replaces,
-            &opts.targets,
-        )?;
+        let features = CliFeatures::from_command_line(&opts.targets)?
+            .with_default(pkg.summary().features().get("default"));
+        let new_pkg =
+            run_check_ephemeral(gctx, pkg, &rw_lock, &opts, build_mode, &replaces, &features)?;
         let patch_registries = patch_registries(&new_pkg)?;
         let path = new_pkg
             .manifest_path()
