@@ -181,6 +181,17 @@ cargo-dragons version bump-pre
 cargo-dragons unify-deps
 ```
 
+## Feature combinations in independence checks
+
+`independence-check` first checks the package's default configuration, then
+compiles every subset of its feature names with automatic defaults disabled
+(equivalent to `--no-default-features --features <subset>`). This includes the
+empty set, single features, and all features together. A subset containing the
+`default` feature explicitly still enables the features it implies. Both in-place
+and ephemeral contexts use this policy; ordinary `check` retains Cargo's defaults.
+Each run lists whether automatic defaults are enabled and the declared default
+feature list (not its transitive expansion).
+
 ## In the wild
 
 _You are using the tooling and want to be mentioned here–[create an issue](https://github.com/gnunicorn/cargo-dragons/issues/new)_
