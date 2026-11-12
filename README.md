@@ -181,6 +181,40 @@ cargo-dragons version bump-pre
 cargo-dragons unify-deps
 ```
 
+## Proposal: XOR features in independence checks
+
+`independence-check` enumerates feature subsets, including the empty set and the
+set containing all features. Some crates require exactly one backend:
+`backend-a` or `backend-b`, but neither zero nor both. The
+`tests/fixtures/xor-features` fixture and `tests/xor_features.rs` cover this truth
+table and document that the current checker rejects it.
+
+Cargo features are additive; Cargo has no native XOR constraint. A proposed
+extension is opt-in package metadata (not implemented yet):
+
+```toml
+[package.metadata.dragons.independence]
+exactly-one-of = [["backend-a", "backend-b"]]
+```
+
+The checker would:
+
+- Validate feature names, generate feature subsets, and retain only those with
+  exactly one enabled feature in each declared group. For this fixture, check
+  `{backend-a}` and `{backend-b}`, and report `{}` and `{backend-a, backend-b}` as
+  skipped by the declared constraint.
+- Apply constraints to the **effective** enabled features after resolving default
+  features and feature implications, not just the requested feature names. Both
+  in-place and ephemeral contexts must use the same default-feature policy.
+- Fail on invalid metadata, a matrix with no valid configurations, or any compile
+  failure in a valid configuration. Never infer unsupported configurations from
+  compiler failures, since that could hide real regressions.
+- Preserve today's exhaustive behavior for packages without this metadata.
+
+The crate should keep its `compile_error!` guards so ordinary Cargo invocations
+also reject invalid combinations. The metadata would only constrain the check
+matrix; it would not change Cargo's feature resolution.
+
 ## In the wild
 
 _You are using the tooling and want to be mentioned here–[create an issue](https://github.com/gnunicorn/cargo-dragons/issues/new)_
