@@ -162,11 +162,11 @@ pub struct PackageSelectOptions {
     #[clap(short, long)]
     pub ignore_pre_version: Vec<String>,
 
-    /// Ignore whether `publish` is set.
+    /// Bypass the `package.publish` filter during package selection.
     ///
-    /// If nothing else is specified, `publish = true` is assumed for every package. If publish
-    /// is set to false or any registry, it is ignored by default. If you want to include it
-    /// regardless, set this flag.
+    /// By default, packages that disable publishing or specify a registry allowlist
+    /// are excluded from selection. This flag bypasses that filter, but release plans
+    /// still exclude packages with publishing disabled (`publish = false` or `publish = []`).
     #[clap(long)]
     pub ignore_publish: bool,
 

@@ -122,7 +122,10 @@ where
     let mut graph = Graph::<Package, (), Directed, u32>::new();
     let members = members_deep(gctx, ws);
 
-    let (members, to_ignore): (Vec<_>, Vec<_>) = members.iter().partition(|m| predicate(m));
+    // A selection override must never turn private fixtures into release candidates.
+    let (members, to_ignore): (Vec<_>, Vec<_>) = members.iter().partition(|m| {
+        !matches!(m.publish(), Some(registries) if registries.is_empty()) && predicate(m)
+    });
 
     let ignored = HashSet::<InternedString>::from_iter(to_ignore.into_iter().map(|m| m.name()));
 
@@ -336,6 +339,7 @@ mod tests {
         name: &'static str,
         version: Option<Version>,
         dependencies: Vec<(&'static str, &'static str)>,
+        publish: bool,
     }
 
     impl Krate {
@@ -365,6 +369,7 @@ mod tests {
                 name,
                 version: None,
                 dependencies: Vec::new(),
+                publish: true,
             };
             self.krates.push(krate);
             self.krates.last_mut().unwrap()
@@ -412,13 +417,14 @@ name = "{name}"
 version = "{version}"
 edition = "2024"
 description = "{name}"
-publish = false
+publish = {publish}
 
 [dependencies]
 {dependencies}
 "#,
                         name = krate.name,
                         version = krate.version.clone().expect("Must have version. qed"),
+                        publish = krate.publish,
                     ),
                 )?;
                 fs::write(
@@ -464,6 +470,59 @@ publish = false
                 .map(|pkg| pkg.name().as_str())
                 .collect::<Vec<_>>()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn release_plan_excludes_publish_false_even_with_an_unconditional_predicate() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let mut wsb = WorkspaceBuilder::default();
+        wsb.add_crate("public")
+            .version(1, 0, 0)
+            .add_dependency("private-fixture", "1")?;
+        wsb.add_crate("private-fixture").version(1, 0, 0).publish = false;
+
+        let (gctx, ws) = wsb.build(tmp.path())?;
+        let plan = release_plan_inner_with_published(
+            gctx,
+            &ws,
+            |_| true,
+            None,
+            |_, pkg| {
+                assert_ne!(pkg.name().as_str(), "private-fixture");
+                false
+            },
+        )
+        .expect("test graph is acyclic");
+
+        assert_eq!(plan.to_release.len(), 1);
+        assert_eq!(plan.to_release[0].name().as_str(), "public");
+        assert!(plan.already_published.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn release_rejects_publish_false_before_modifying_manifests() -> Result<()> {
+        for dry_run in [false, true] {
+            let tmp = tempfile::tempdir()?;
+            let mut wsb = WorkspaceBuilder::default();
+            wsb.add_crate("private-fixture").version(1, 0, 0).publish = false;
+            let (gctx, ws) = wsb.build(tmp.path())?;
+            let package = ws.members().next().unwrap().clone();
+            let manifest_path = package.manifest_path().to_owned();
+            let before = fs::read(&manifest_path)?;
+
+            let error = crate::commands::release(gctx, vec![package], ws, dry_run, None, None)
+                .expect_err("publish = false must prevent release, including dry runs");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("private-fixture is marked as publish = false")
+            );
+            assert_eq!(fs::read(&manifest_path)?, before);
+            assert!(!tmp.path().join("target").exists());
+        }
         Ok(())
     }
 

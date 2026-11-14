@@ -372,6 +372,147 @@ fn dry_run_unleash_lists_available_packages_and_exits_when_release_set_is_empty(
 }
 
 #[test]
+fn dry_run_unleash_excludes_publish_false_from_mixed_workspace()
+-> Result<(), Box<dyn std::error::Error>> {
+    for ignore_publish in [false, true] {
+        let ws = TestWorkspace::from_fixture("simple-base")?;
+        add_publish_false(&ws, "crateA/Cargo.toml")?;
+
+        let mut cmd = ws.cargo_dragons()?;
+        cmd.args(["unleash", "--dry-run", "--skip-verify"]);
+        if ignore_publish {
+            cmd.arg("--ignore-publish");
+        }
+
+        let assert = cmd.assert().success();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        let packaged = stderr
+            .lines()
+            .filter(|line| line.contains("Would package"))
+            .collect::<Vec<_>>();
+        assert_eq!(packaged.len(), 2, "stderr:\n{stderr}");
+        for name in ["crateB", "crateC"] {
+            assert!(
+                packaged.iter().any(|line| line.contains(name)),
+                "expected {name} to be packaged, stderr:\n{stderr}"
+            );
+        }
+        assert!(
+            packaged.iter().all(|line| !line.contains("crateA")),
+            "publish = false package must not be packaged, stderr:\n{stderr}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dry_run_unleash_explicit_publish_false_selection_is_empty()
+-> Result<(), Box<dyn std::error::Error>> {
+    for ignore_publish in [false, true] {
+        let ws = TestWorkspace::from_fixture("simple-base")?;
+        add_publish_false(&ws, "crateA/Cargo.toml")?;
+
+        let mut cmd = ws.cargo_dragons()?;
+        cmd.args([
+            "unleash",
+            "--packages",
+            "crateA",
+            "--dry-run",
+            "--skip-verify",
+        ]);
+        if ignore_publish {
+            cmd.arg("--ignore-publish");
+        }
+
+        cmd.assert()
+            .success()
+            .stdout(contains("No packages selected"))
+            .stderr(contains("Releasing").not())
+            .stderr(contains("Dry-run packaging").not())
+            .stderr(contains("Would package").not());
+    }
+    Ok(())
+}
+
+#[test]
+fn dry_run_unleash_excludes_publish_false_pre_release_dependency()
+-> Result<(), Box<dyn std::error::Error>> {
+    for ignore_publish in [false, true] {
+        let ws = TestWorkspace::from_fixture("include-pre")?;
+        add_publish_false(&ws, "unicode-width/Cargo.toml")?;
+
+        let mut cmd = ws.cargo_dragons()?;
+        cmd.args([
+            "unleash",
+            "--packages",
+            "cu-left-pad",
+            "--include-pre-deps",
+            "--dry-run",
+            "--skip-verify",
+        ]);
+        if ignore_publish {
+            cmd.arg("--ignore-publish");
+        }
+
+        let assert = cmd.assert().success();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+        let packaged = stderr
+            .lines()
+            .filter(|line| line.contains("Would package"))
+            .collect::<Vec<_>>();
+        assert_eq!(packaged.len(), 1, "stderr:\n{stderr}");
+        assert!(packaged[0].contains("cu-left-pad"), "stderr:\n{stderr}");
+        assert!(
+            !packaged[0].contains("unicode-width"),
+            "publish = false dependency must not be packaged, stderr:\n{stderr}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unleash_all_publish_false_with_ignore_publish_is_a_noop()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("simple-base")?;
+    for manifest in [
+        "crateA/Cargo.toml",
+        "crateB/Cargo.toml",
+        "crateC/Cargo.toml",
+    ] {
+        add_publish_false(&ws, manifest)?;
+    }
+    let manifests = [
+        "Cargo.toml",
+        "crateA/Cargo.toml",
+        "crateB/Cargo.toml",
+        "crateC/Cargo.toml",
+    ]
+    .into_iter()
+    .map(|relative| Ok((relative, fs::read(ws.path().join(relative))?)))
+    .collect::<Result<Vec<_>, std::io::Error>>()?;
+
+    let mut cmd = ws.cargo_dragons()?;
+    cmd.args(["unleash", "--ignore-publish", "--skip-verify"]);
+    cmd.assert()
+        .success()
+        .stdout(contains("No packages selected"))
+        .stderr(contains("Releasing").not())
+        .stderr(contains("Dropping dev-dependencies").not())
+        .stderr(contains("Publishing").not())
+        .stderr(contains("Packaging").not())
+        .stderr(contains("Would package").not());
+
+    for (relative, before) in manifests {
+        assert_eq!(
+            fs::read(ws.path().join(relative))?,
+            before,
+            "manifest {relative} must remain unchanged"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn dry_run_unleash_packages_workspace_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let ws = TestWorkspace::from_fixture("include-pre")?;
 

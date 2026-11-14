@@ -183,14 +183,12 @@ cargo-dragons unify-deps
 
 ## Feature combinations in independence checks
 
-`independence-check` first checks the package's default configuration, then
-compiles every subset of its feature names with automatic defaults disabled
-(equivalent to `--no-default-features --features <subset>`). This includes the
-empty set, single features, and all features together. A subset containing the
-`default` feature explicitly still enables the features it implies. Both in-place
-and ephemeral contexts use this policy; ordinary `check` retains Cargo's defaults.
-Each run lists whether automatic defaults are enabled and the declared default
-feature list (not its transitive expansion).
+`independence-check` checks defaults first, then every subset of the package's
+feature names with automatic defaults disabled (`--no-default-features`). This
+includes the empty set; explicitly selecting `default` enables its implied features.
+Both in-place and ephemeral contexts use this policy; ordinary `check` retains defaults.
+For `n` feature names, each mode runs `2^n + 1` checks. No combination limit is
+currently enforced, so packages with many features can be expensive to check.
 
 ## In the wild
 

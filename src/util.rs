@@ -297,7 +297,7 @@ pub(crate) fn handle_empty_package_is_failures_with_available<T>(
                 println!("No packages selected. All good. Exiting.");
                 if let Some(available_packages) = available_packages {
                     println!(
-                        "\nAvailable packages (showing up to {MAX_AVAILABLE_PACKAGE_SUGGESTIONS}):\n{}\n\nHow to fix: bump the version of the crate you want to release if it is already published, or use `--packages <name>` to target one of the packages above. If a package is skipped because it has `publish = false`, pass `--ignore-publish`.",
+                        "\nAvailable packages (showing up to {MAX_AVAILABLE_PACKAGE_SUGGESTIONS}):\n{}\n\nHow to fix: bump the version of the crate you want to release if it is already published, or use `--packages <name>` to target one of the packages above. Packages marked `publish = false` are never included in release plans; remove that setting only if you intend to publish them.",
                         format_available_packages(None, available_packages)
                     );
                 }

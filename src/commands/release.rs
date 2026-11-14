@@ -77,6 +77,14 @@ pub fn release(
     token: Option<Secret<String>>,
     owner: Option<String>,
 ) -> Result<(), anyhow::Error> {
+    for package in &packages {
+        anyhow::ensure!(
+            !matches!(package.publish(), Some(registries) if registries.is_empty()),
+            "{} is marked as publish = false; refusing to release it",
+            package.name()
+        );
+    }
+
     let cli_features = CliFeatures {
         features: Default::default(),
         all_features: false,
