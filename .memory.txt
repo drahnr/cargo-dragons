@@ -1,0 +1,10 @@
+Project preferences
+
+- Keep anyhow for error handling. Do not migrate to eyre/color-eyre unless explicitly requested again.
+- When asked to clean up commit messages, replace terse or placeholder subjects with descriptive messages grounded in each commit's changes. Review back to, but do not rewrite, the previous release or pre-release commit. Preserve committed file contents and unrelated user work; do not push without explicit permission.
+
+Last commit-message cleanup
+
+- Previous release boundary: d67f176 (release: v1.0.2).
+- Renamed 5df664c (btr) to f669f2f (fix: exclude non-publishable packages from releases), with a descriptive body.
+- Verified the committed tree was unchanged. Nothing was pushed.
