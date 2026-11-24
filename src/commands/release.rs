@@ -1,4 +1,9 @@
-use crate::{commands::add_owner, util::devdeps::DevDependencyRestoreSession};
+use crate::{
+    registry::{PublicationRegistry, RegistryTokens},
+    util::devdeps::DevDependencyRestoreSession,
+};
+
+use super::add_owner::add_owner_for_registry;
 use anyhow::Context;
 use cargo::{
     GlobalContext,
@@ -6,7 +11,6 @@ use cargo::{
     ops::{self, PublishOpts, publish},
     sources::PathSource,
 };
-use cargo_credential::Secret;
 
 use std::{thread, time::Duration};
 
@@ -74,16 +78,13 @@ pub fn release(
     packages: Vec<Package>,
     ws: Workspace<'_>,
     dry_run: bool,
-    token: Option<Secret<String>>,
+    tokens: RegistryTokens,
     owner: Option<String>,
 ) -> Result<(), anyhow::Error> {
-    for package in &packages {
-        anyhow::ensure!(
-            !matches!(package.publish(), Some(registries) if registries.is_empty()),
-            "{} is marked as publish = false; refusing to release it",
-            package.name()
-        );
-    }
+    let registries = packages
+        .iter()
+        .map(|package| PublicationRegistry::for_package(gctx, package))
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let cli_features = CliFeatures {
         features: Default::default(),
@@ -92,33 +93,33 @@ pub fn release(
     };
 
     if dry_run {
-        let opts = ops::PackageOpts {
-            gctx,
-            verify: false,
-            check_metadata: true,
-            list: false,
-            fmt: ops::PackageMessageFormat::Human,
-            allow_dirty: true,
-            include_lockfile: true,
-            jobs: None,
-            to_package: ops::Packages::Default,
-            targets: Default::default(),
-            cli_features,
-            keep_going: false,
-            reg_or_index: None,
-            dry_run: true,
-        };
-
-        // Keep the ephemeral packaging configuration above in sync with real package
-        // options, but do not call Cargo's package/publish dry-run here: it performs
-        // registry availability checks after path dependencies are stripped, which
-        // fails for unpublished workspace crates released together.
-        drop(opts);
-
         gctx.shell()
             .status("Dry-run packaging (🏜️):", packages.len())?;
-        for pkg in packages {
-            gctx.shell().status("Would package (🏜️)", &pkg)?;
+        for (pkg, registry) in packages.iter().zip(&registries) {
+            let opts = ops::PackageOpts {
+                gctx,
+                verify: false,
+                check_metadata: true,
+                list: false,
+                fmt: ops::PackageMessageFormat::Human,
+                allow_dirty: true,
+                include_lockfile: true,
+                jobs: None,
+                to_package: ops::Packages::Default,
+                targets: Default::default(),
+                cli_features: cli_features.clone(),
+                keep_going: false,
+                reg_or_index: Some(registry.reg_or_index()),
+                dry_run: true,
+            };
+
+            // Keep the ephemeral packaging configuration above in sync with real package
+            // options, but do not call Cargo's package/publish dry-run here: it performs
+            // registry availability checks after path dependencies are stripped, which
+            // fails for unpublished workspace crates released together.
+            drop(opts);
+
+            gctx.shell().status("Would package (🏜️)", pkg)?;
         }
         return Ok(());
     }
@@ -150,7 +151,7 @@ pub fn release(
 
         gctx.shell()
             .status("Publishing (🚂🚃🚃):", packages.len())?;
-        for (idx, pkg) in packages.iter().enumerate() {
+        for (idx, (pkg, registry)) in packages.iter().zip(&registries).enumerate() {
             if idx > 0 && delay > 0 {
                 gctx.shell().status(
                     "Waiting",
@@ -163,7 +164,7 @@ pub fn release(
             let opts = PublishOpts {
                 gctx,
                 verify: false,
-                token: token.clone(),
+                token: tokens.for_registry(registry).cloned(),
                 dry_run: false,
                 allow_dirty: true,
                 jobs: None,
@@ -171,12 +172,18 @@ pub fn release(
                 targets: Default::default(),
                 cli_features: cli_features.clone(),
                 keep_going: false,
-                reg_or_index: None,
+                reg_or_index: Some(registry.reg_or_index()),
             };
             gctx.shell().status("Publishing (🚂🚃🚃)", pkg)?;
             publish(&pkg_ws, &opts)?;
             if let Some(ref o) = owner {
-                add_owner(gctx, pkg, o.clone(), token.clone())?;
+                add_owner_for_registry(
+                    gctx,
+                    pkg,
+                    o.clone(),
+                    tokens.for_registry(registry).cloned(),
+                    registry,
+                )?;
             }
         }
         Ok(())

@@ -1,0 +1,8 @@
+[package]
+name = "dragons-registry-fixture"
+version = "0.2.0"
+edition = "2024"
+publish = ["dragons-test"]
+license = "MIT"
+description = "Dependency-free fixture for cargo-dragons alternate registry tests"
+repository = "https://example.invalid/cargo-dragons-fixtures"

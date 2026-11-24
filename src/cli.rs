@@ -1,10 +1,9 @@
 use anyhow::Context;
 use cargo::{
     GlobalContext,
-    core::{SourceId, Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
-    util::{auth, context::homedir},
+    core::{Workspace, compiler::CompileMode, package::Package, resolver::CliFeatures},
+    util::context::homedir,
 };
-use cargo_credential::{Operation, Secret};
 use cargo_util_terminal::{Shell, Verbosity};
 use regex::Regex;
 use semver::Version;
@@ -13,6 +12,7 @@ use toml_edit::Value;
 
 use crate::{
     commands::{self, IndependenceCtx},
+    registry::{PublicationRegistry, RegistryTokens},
     util::{
         available_package_names, handle_empty_package_is_failures_with_available,
         make_pkg_predicate, members_deep,
@@ -378,12 +378,16 @@ pub enum Command {
         pkg_opts: PackageSelectOptions,
         /// Owner to add to the packages
         owner: String,
-        /// the crates.io token to use for API access
+        /// Token for a publication registry; repeat as --token REGISTRY:TOKEN.
         ///
-        /// If neither this nor Cargo's native token environment variable is set,
-        /// this falls back to the default value provided in the user directory.
-        #[arg(long, env = "CARGO_REGISTRY_TOKEN", hide_env_values = true)]
-        token: Option<String>,
+        /// A bare --token=TOKEN targets the sole selected registry, or crates-io when
+        /// multiple registries are selected. Prefixes must name selected registries;
+        /// alternate registries must also be configured in Cargo. Supply at most one
+        /// nonempty token per registry. Other registries use Cargo's credential providers,
+        /// registry-specific environment tokens, or saved `cargo login` credentials.
+        /// Every selected registry's credentials are checked before owner changes.
+        #[arg(long, value_name = "[REGISTRY:]TOKEN")]
+        token: Vec<String>,
     },
     /// Check the package(s) for unused dependencies
     CleanDeps {
@@ -472,12 +476,18 @@ pub enum Command {
         /// Ensure we have the owner set as well
         #[arg(long = "owner")]
         add_owner: Option<String>,
-        /// the crates.io token to use for uploading
+        /// Token for a publication registry; repeat as --token REGISTRY:TOKEN.
         ///
-        /// If neither this nor Cargo's native token environment variable is set,
-        /// this falls back to the default value provided in the user directory.
-        #[arg(long, env = "CARGO_REGISTRY_TOKEN", hide_env_values = true)]
-        token: Option<String>,
+        /// For example: --token crates-io:TOKEN --token fff-rs:OTHER_TOKEN.
+        /// A bare --token=TOKEN targets the sole selected registry, or crates-io when
+        /// multiple registries are selected. Prefixes must name selected registries;
+        /// alternate registries must also be configured in Cargo. Supply at most one
+        /// nonempty token per registry. Other registries use Cargo's credential providers,
+        /// registry-specific environment tokens, or saved `cargo login` credentials.
+        /// Missing credentials for any selected registry fail early, even with --dry-run.
+        /// Explicit tokens are process-local and never saved to Cargo's credentials file.
+        #[arg(long, value_name = "[REGISTRY:]TOKEN")]
+        token: Vec<String>,
     },
     /// Unify all dependencies to those used in the workspace
     /// and suggest additional ones.
@@ -552,26 +562,6 @@ fn verify_readme_feature() -> anyhow::Result<()> {
     }
 }
 
-fn ensure_crates_io_login(
-    gctx: &GlobalContext,
-    token: Option<&Secret<String>>,
-) -> Result<(), anyhow::Error> {
-    let source_id = SourceId::crates_io(gctx)?;
-    if let Some(token) = token {
-        // Seeds Cargo's in-memory credential cache for this process; this does not
-        // persist or overwrite the user's credentials.toml.
-        auth::cache_token_from_commandline(gctx, &source_id, Secret::as_deref(token));
-    }
-
-    auth::auth_token(gctx, &source_id, None, Operation::Read, Vec::new(), false)
-        .map(|_| ())
-        .with_context(|| {
-            "Not logged in to crates.io. Run `cargo login` or provide a token with \
-            `--token`/`CARGO_REGISTRY_TOKEN` before running `cargo dragons unleash` \
-            (including `--dry-run`)."
-        })
-}
-
 //TODO: Refactor this implementation to be a bit more readable.
 pub fn run(args: Args) -> Result<(), anyhow::Error> {
     pretty_env_logger::init();
@@ -636,11 +626,28 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             token,
             pkg_opts,
         } => {
-            let token = token.map(Secret::from);
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-            for pkg in ws.members().filter(|p| predicate(p)) {
-                commands::add_owner(&gctx, pkg, owner.clone(), token.clone())?;
+            let packages = ws
+                .members()
+                .filter(|p| {
+                    !matches!(p.publish(), Some(registries) if registries.is_empty())
+                        && predicate(p)
+                })
+                .collect::<Vec<_>>();
+            let registries = packages
+                .iter()
+                .map(|package| PublicationRegistry::for_package(&gctx, package))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let tokens = RegistryTokens::from_cli(token, registries.iter().map(|r| r.name()))?;
+            tokens.ensure_logins(&gctx, &registries)?;
+            for (pkg, registry) in packages.into_iter().zip(&registries) {
+                commands::add_owner(
+                    &gctx,
+                    pkg,
+                    owner.clone(),
+                    tokens.for_registry(registry).cloned(),
+                )?;
             }
             Ok(())
         }
@@ -780,10 +787,6 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             pkg_opts,
             without_self,
         } => {
-            gctx.shell().status("Checking", "crates.io login")?;
-            let token = token.map(Secret::from);
-            ensure_crates_io_login(&gctx, token.as_ref())?;
-
             let explicitly_selected = if !pkg_opts.packages.is_empty() {
                 {
                     HashSet::from_iter(members_deep(&gctx, &ws).into_iter().filter_map(|package| {
@@ -802,6 +805,8 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
                 .is_empty()
                 .then(|| available_package_names(&gctx, &ws));
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
+
+            let tokens = check_registry_token(&gctx, &ws, token, &predicate)?;
 
             let plan = commands::release_plan(&gctx, &ws, predicate, release_opts.dot_graph)?;
             if handle_empty_release_plan(
@@ -863,7 +868,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             gctx.shell()
                 .status("Releasing", package_list_with_versions(&packages))?;
 
-            commands::release(&gctx, packages, ws, dry_run, token, add_owner)
+            commands::release(&gctx, packages, ws, dry_run, tokens, add_owner)
         }
         Command::IndependenceCheck {
             mode: modes,
@@ -903,4 +908,25 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
             commands::independence_check(&gctx, packages, &opts, ws, modes, context)
         }
     }
+}
+
+/// Resolve explicit tokens against the selected targets and require credentials for
+/// every registry, including those relying on Cargo's configured credential providers.
+fn check_registry_token(
+    gctx: &GlobalContext,
+    ws: &Workspace<'_>,
+    tokens: Vec<String>,
+    predicate: &(impl Fn(&Package) -> bool + 'static),
+) -> Result<RegistryTokens, anyhow::Error> {
+    let mut registries = std::collections::BTreeMap::new();
+    for package in members_deep(gctx, ws).iter().filter(|package| {
+        !matches!(package.publish(), Some(registries) if registries.is_empty())
+            && (*predicate)(package)
+    }) {
+        let registry = PublicationRegistry::for_package(gctx, package)?;
+        registries.insert(registry.name().to_owned(), registry);
+    }
+    let tokens = RegistryTokens::from_cli(tokens, registries.keys().map(String::as_str))?;
+    tokens.ensure_logins(gctx, registries.values())?;
+    Ok(tokens)
 }

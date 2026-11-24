@@ -1,0 +1,8 @@
+[package]
+name = "dragons-private-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Private fixture that must never be uploaded"
+repository = "https://example.invalid/cargo-dragons-fixtures"

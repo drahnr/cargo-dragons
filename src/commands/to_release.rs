@@ -1,4 +1,5 @@
-use crate::util::members_deep;
+use crate::{registry::PublicationRegistry, util::members_deep};
+use anyhow::Context;
 use cargo::{
     GlobalContext,
     core::{SourceId, Workspace, dependency::DepKind, package::Package},
@@ -109,7 +110,7 @@ fn release_plan_inner_with_published<F, D, P>(
 where
     F: Fn(&Package) -> bool,
     D: Into<Option<PathBuf>>,
-    P: Fn(&RegistrySource<'_>, &Package) -> bool,
+    P: Fn(&RegistrySource<'_>, &Package) -> anyhow::Result<bool>,
 {
     let lock =
         gctx.acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::MutateExclusive)?;
@@ -129,29 +130,29 @@ where
 
     let ignored = HashSet::<InternedString>::from_iter(to_ignore.into_iter().map(|m| m.name()));
 
-    gctx.shell()
-        .status("Syncing", "Versions from crates.io")
-        .expect("Writing to Shell doesn't fail");
-
     let mut already_published_names = HashSet::new();
     let mut already_published = Vec::new();
-    let registry = RegistrySource::remote(
-        SourceId::crates_io(gctx).expect(
-            "Your main registry (usually crates.io) can't be read. Please check your .cargo/config",
-        ),
-        &Default::default(),
-        gctx,
-    )
-    .expect("Failed getting remote registry");
-
-    registry.invalidate_cache();
+    let mut registries = HashMap::new();
 
     if std::env::var_os("CARGO_NET_OFFLINE").is_some() {
         info!("CARGO_NET_OFFLINE is set; assuming none of the crates are already published");
     }
 
-    for m in members.iter() {
-        if is_published(&registry, m) {
+    for m in &members {
+        let target = PublicationRegistry::for_package(gctx, m)?;
+        let registry = match registries.entry(target.index_source_id()) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                gctx.shell()
+                    .status("Syncing", format!("Versions from {}", target.name()))?;
+                let registry =
+                    RegistrySource::remote(target.index_source_id(), &Default::default(), gctx)
+                        .with_context(|| format!("Could not open registry `{}`", target.name()))?;
+                registry.invalidate_cache();
+                entry.insert(registry)
+            }
+        };
+        if is_published(registry, m)? {
             already_published_names.insert(m.name());
             already_published.push((*m).clone());
         }
@@ -189,7 +190,7 @@ where
             if let Some(dep_index) = map.get(&dep.package_name()) {
                 graph.add_edge(*current_index, *dep_index, ());
             } else if already_published_names.contains(&dep.package_name()) {
-                trace!("All good, it's on crates.io");
+                trace!("All good, it's on the publication registry");
             } else {
                 // we are looking at a dependency, we won't include in the set of
                 // ones we are about to publish. Let's make sure, this won't block
@@ -197,7 +198,7 @@ where
                 trace!("Checking dependency for problems: {}", dep.package_name());
                 let source = dep.source_id();
                 if source == default_registry {
-                    trace!("All good, it's on crates.io")
+                    trace!("All good, it's a crates.io dependency")
                 } else if source.is_path() && dep.is_locked() {
                     // this is a pretty big indicator that something is going to fail later...
                     if ignored.contains(&dep.package_name()) {
@@ -264,29 +265,41 @@ where
 }
 
 #[cfg(not(test))]
-fn is_published_to_registry(registry: &RegistrySource<'_>, package: &Package) -> bool {
+fn is_published_to_registry(
+    registry: &RegistrySource<'_>,
+    package: &Package,
+) -> anyhow::Result<bool> {
     if std::env::var_os("CARGO_NET_OFFLINE").is_some() {
-        return false;
+        return Ok(false);
     }
 
     let dep = Dependency::parse(
         package.name(),
-        Some(&package.version().to_string()),
+        Some(&format!("={}", package.version())),
         registry.source_id(),
-    )
-    .expect("Parsing our dependency doesn't fail");
+    )?;
 
     let mut found = false;
     futures::executor::block_on(registry.query(&dep, QueryKind::Exact, &mut |_| {
         found = true;
     }))
-    .expect("Querying the local registry doesn't fail");
-    found
+    .with_context(|| {
+        format!(
+            "Could not query {} {} on {}",
+            package.name(),
+            package.version(),
+            registry.source_id()
+        )
+    })?;
+    Ok(found)
 }
 
 #[cfg(test)]
-fn is_published_to_registry(_registry: &RegistrySource<'_>, _package: &Package) -> bool {
-    false
+fn is_published_to_registry(
+    _registry: &RegistrySource<'_>,
+    _package: &Package,
+) -> anyhow::Result<bool> {
+    Ok(false)
 }
 
 /// Render a graphviz (aka dot graph) to a file.
@@ -490,7 +503,7 @@ publish = {publish}
             None,
             |_, pkg| {
                 assert_ne!(pkg.name().as_str(), "private-fixture");
-                false
+                Ok(false)
             },
         )
         .expect("test graph is acyclic");
@@ -512,8 +525,15 @@ publish = {publish}
             let manifest_path = package.manifest_path().to_owned();
             let before = fs::read(&manifest_path)?;
 
-            let error = crate::commands::release(gctx, vec![package], ws, dry_run, None, None)
-                .expect_err("publish = false must prevent release, including dry runs");
+            let error = crate::commands::release(
+                gctx,
+                vec![package],
+                ws,
+                dry_run,
+                Default::default(),
+                None,
+            )
+            .expect_err("publish = false must prevent release, including dry runs");
 
             assert!(
                 error
@@ -545,7 +565,7 @@ publish = {publish}
             &ws,
             |_pkg| true,
             tmp.path().join("already-published.dot"),
-            |_, pkg| pkg.name().as_str() == "already-there",
+            |_, pkg| Ok(pkg.name().as_str() == "already-there"),
         )
         .expect("test graph is acyclic");
 
