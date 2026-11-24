@@ -95,10 +95,10 @@ FLAGS:
             Prints help information
 
         --ignore-publish
-            Ignore whether `publish` is set.
+            Bypass the `package.publish` filter during package selection.
 
-            If nothing else is specified, `publish = true` is assumed for every package. If publish is set to false or
-            any registry, it is ignored by default. If you want to include it regardless, set this flag.
+            Packages with a registry allowlist require this flag to be selected. Packages with publishing disabled
+            (`publish = false` or `publish = []`) are never included in release plans, even with this flag.
         --include-dev-deps
             Do not disable dev-dependencies
 
@@ -136,12 +136,87 @@ OPTIONS:
 
             Provide one or many regular expression that, if the package name matches, means we skip that package.
             Mutually exclusive with `--package`
-        --token <token>
-            the crates.io token to use for uploading
+        --token <[REGISTRY:]TOKEN>
+            Explicit token for a selected publication registry; repeat for multiple registries. Also accepts --token=...
 
-            If this is nor the environment variable are set, this falls back to the default value provided in the user
-            directory [env: CRATES_TOKEN]
+            A bare token targets the sole selected registry, or crates-io if multiple registries are selected.
+            Prefixes must name selected registries. Duplicate tokens for a registry and empty tokens are rejected.
+            Each selected registry needs an explicit token or Cargo credentials, even during a dry run.
 ```
+
+### Registry selection and authentication
+
+The publication destination is resolved per package, consistently for login checks,
+exact-version lookups, uploads, and `--owner` updates:
+
+- Omitted `package.publish` or `publish = true`: crates.io.
+- `publish = ["fff-rs"]`: that named registry. Use `--ignore-publish`
+  to include packages with a registry allowlist in selection.
+- `publish = false` or `publish = []`: never released.
+- Multiple allowed registries: rejected as ambiguous; narrow the allowlist to one
+  registry. There is currently no `--registry` override.
+
+Alternate registries must be configured in Cargo, even when supplying explicit
+CLI tokens. For example:
+
+```toml
+# .cargo/config.toml
+[registries.fff-rs]
+index = "sparse+https://registry.example.com/index/"
+credential-provider = "cargo:token"
+```
+
+For Cargo-managed credentials, log in to the registry:
+
+```sh
+cargo login --registry fff-rs
+cargo dragons unleash --ignore-publish --dry-run
+```
+
+Both `unleash` and `add-owner` accept repeated `--token [REGISTRY:]TOKEN`
+arguments, including the `--token=...` form. Prefix examples are
+`crates-io:$token` and `fff-rs:$other-token` (schematic token placeholders).
+In real shell commands, use valid variable names and quote expansions. For a
+selection targeting both crates.io and `fff-rs`:
+
+```sh
+cargo dragons unleash --ignore-publish \
+    --token "crates-io:$token" --token="fff-rs:$other_token"
+cargo dragons add-owner OWNER --ignore-publish \
+    --token "crates-io:$token" --token="fff-rs:$other_token"
+```
+
+A registry prefix must name a selected publication registry; unknown prefixes and
+configured-but-unused registry prefixes are rejected. A bare token remains
+backwards compatible: it targets the sole selected publication registry when
+there is only one, otherwise it targets `crates-io`, which must be selected.
+Multiple tokens resolving to the same registry are rejected, including a bare
+and a prefixed token for that registry. Empty tokens are rejected too.
+
+Each selected registry must have either an explicit token or credentials available
+through Cargo's credential provider, saved `cargo login`, or registry-specific
+token environment variable. Cargo reads `CARGO_REGISTRY_TOKEN` for crates.io and
+`CARGO_REGISTRIES_FFF_RS_TOKEN` for `fff-rs`. Explicit tokens can be combined with
+Cargo-managed credentials for other selected registries. Both commands fail early
+if any selected registry lacks credentials, including during `unleash --dry-run`.
+
+Explicit tokens are process-local, are not persisted or written over saved
+credentials, and are scoped to the matching registry's uploads and owner updates.
+A crates.io token is not forwarded to an alternate registry. CLI tokens may be
+visible in process listings; literal tokens may also remain in shell history.
+Prefer Cargo credential providers or saved login credentials when that exposure
+is a concern.
+
+If crates.io source replacement is configured, an implicit crates.io destination
+is rejected rather than silently publishing publicly; choose a single registry
+explicitly in `package.publish`.
+
+The registry regressions run with `cargo test --test registry`. Their harness
+starts an ephemeral loopback sparse registry, uses an isolated `CARGO_HOME`, and
+runs `cargo login` with dummy credentials. It verifies real uploads and owner
+updates, exact-version detection, credential isolation, and disabled packages.
+Crates.io access is redirected to the dummy server, so the tests never publish
+outside the local harness or use your saved credentials.
 
 ## Common Usage Examples
 
