@@ -386,10 +386,7 @@ fn dry_run_unleash_excludes_publish_false_from_mixed_workspace()
 
         let assert = cmd.assert().success();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
-        let packaged = stderr
-            .lines()
-            .filter(|line| line.contains("Would package"))
-            .collect::<Vec<_>>();
+        let packaged = Vec::from_iter(stderr.lines().filter(|line| line.contains("Would package")));
         assert_eq!(packaged.len(), 2, "stderr:\n{stderr}");
         for name in ["crateB", "crateC"] {
             assert!(
@@ -456,10 +453,7 @@ fn dry_run_unleash_excludes_publish_false_pre_release_dependency()
 
         let assert = cmd.assert().success();
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
-        let packaged = stderr
-            .lines()
-            .filter(|line| line.contains("Would package"))
-            .collect::<Vec<_>>();
+        let packaged = Vec::from_iter(stderr.lines().filter(|line| line.contains("Would package")));
         assert_eq!(packaged.len(), 1, "stderr:\n{stderr}");
         assert!(packaged[0].contains("cu-left-pad"), "stderr:\n{stderr}");
         assert!(
@@ -481,15 +475,16 @@ fn unleash_all_publish_false_with_ignore_publish_is_a_noop()
     ] {
         add_publish_false(&ws, manifest)?;
     }
-    let manifests = [
-        "Cargo.toml",
-        "crateA/Cargo.toml",
-        "crateB/Cargo.toml",
-        "crateC/Cargo.toml",
-    ]
-    .into_iter()
-    .map(|relative| Ok((relative, fs::read(ws.path().join(relative))?)))
-    .collect::<Result<Vec<_>, std::io::Error>>()?;
+    let manifests = Result::<Vec<_>, std::io::Error>::from_iter(
+        [
+            "Cargo.toml",
+            "crateA/Cargo.toml",
+            "crateB/Cargo.toml",
+            "crateC/Cargo.toml",
+        ]
+        .into_iter()
+        .map(|relative| Ok((relative, fs::read(ws.path().join(relative))?))),
+    )?;
 
     let mut cmd = ws.cargo_dragons()?;
     cmd.args(["unleash", "--ignore-publish", "--skip-verify"]);

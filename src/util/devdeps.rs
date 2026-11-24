@@ -195,10 +195,11 @@ impl DevDependencyRestoreSession {
     }
 
     fn restore_written(&mut self) -> anyhow::Result<()> {
-        let restores = std::mem::take(&mut self.restores)
-            .into_iter()
-            .filter(|restore| !restore.is_empty())
-            .collect::<Vec<_>>();
+        let restores = Vec::from_iter(
+            std::mem::take(&mut self.restores)
+                .into_iter()
+                .filter(|restore| !restore.is_empty()),
+        );
         if restores.is_empty() {
             return Ok(());
         }
@@ -222,13 +223,10 @@ impl DevDependencyRestoreSession {
 }
 
 fn safe_path_segment(label: &str) -> String {
-    let safe = label
-        .chars()
-        .map(|ch| match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => ch,
-            _ => '_',
-        })
-        .collect::<String>();
+    let safe = String::from_iter(label.chars().map(|ch| match ch {
+        'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => ch,
+        _ => '_',
+    }));
 
     if safe.is_empty() {
         "manifest".to_owned()
@@ -238,14 +236,15 @@ fn safe_path_segment(label: &str) -> String {
 }
 
 fn remove_dev_dependency_entries(table: &mut Table) -> Vec<RemovedTomlEntry> {
-    ["dev-dependencies", "dev_dependencies"]
-        .into_iter()
-        .filter_map(|key| {
-            table
-                .remove_entry(key)
-                .map(|(key, item)| RemovedTomlEntry { key, item })
-        })
-        .collect()
+    Vec::from_iter(
+        ["dev-dependencies", "dev_dependencies"]
+            .into_iter()
+            .filter_map(|key| {
+                table
+                    .remove_entry(key)
+                    .map(|(key, item)| RemovedTomlEntry { key, item })
+            }),
+    )
 }
 
 fn collect_dev_dependency_sections(document: &mut DocumentMut) -> DevDependencySections {
@@ -261,10 +260,7 @@ fn collect_dev_dependency_sections(document: &mut DocumentMut) -> DevDependencyS
     );
 
     if let Some(targets) = root.get_mut("target").and_then(Item::as_table_mut) {
-        let target_names = targets
-            .iter()
-            .map(|(name, _)| name.to_owned())
-            .collect::<Vec<_>>();
+        let target_names = Vec::from_iter(targets.iter().map(|(name, _)| name.to_owned()));
         for target_name in target_names {
             if let Some(target) = targets.get_mut(&target_name).and_then(Item::as_table_mut) {
                 removed.extend(
@@ -407,10 +403,7 @@ fn insert_removed_entry(table: &mut Table, entry: RemovedTomlEntry) {
 
 fn merge_missing_table_entries(existing: &mut Table, mut removed: Table) -> bool {
     let mut changed = false;
-    let keys = removed
-        .iter()
-        .map(|(key, _)| key.to_owned())
-        .collect::<Vec<_>>();
+    let keys = Vec::from_iter(removed.iter().map(|(key, _)| key.to_owned()));
     for key in keys {
         if existing.contains_key(&key) {
             continue;

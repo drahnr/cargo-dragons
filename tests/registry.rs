@@ -35,10 +35,11 @@ fn assert_registry_uploaded(
     assert!(!uploads[0].archive.is_empty());
 
     let requests = registry.requests();
-    let uploads = requests
-        .iter()
-        .filter(|request| request.method == "PUT" && request.path == "/api/v1/crates/new")
-        .collect::<Vec<_>>();
+    let uploads = Vec::from_iter(
+        requests
+            .iter()
+            .filter(|request| request.method == "PUT" && request.path == "/api/v1/crates/new"),
+    );
     assert_eq!(uploads.len(), 1, "requests: {requests:#?}");
     assert_eq!(uploads[0].authorization.as_deref(), Some(token));
     let upload_position = requests
@@ -55,10 +56,11 @@ fn assert_registry_uploaded(
     );
 
     let owner_path = format!("/api/v1/crates/{package}/owners");
-    let owners = requests
-        .iter()
-        .filter(|request| request.method == "PUT" && request.path == owner_path)
-        .collect::<Vec<_>>();
+    let owners = Vec::from_iter(
+        requests
+            .iter()
+            .filter(|request| request.method == "PUT" && request.path == owner_path),
+    );
     assert_eq!(
         owners.len(),
         usize::from(with_owner),
@@ -119,9 +121,8 @@ fn credentials_snapshot(
         .find_map(|(key, value)| (key == "CARGO_HOME").then_some(value).flatten())
         .map(std::path::PathBuf::from)
         .expect("registry command must set an isolated CARGO_HOME");
-    ["credentials", "credentials.toml"]
-        .into_iter()
-        .map(|name| {
+    anyhow::Result::<Vec<_>>::from_iter(["credentials", "credentials.toml"].into_iter().map(
+        |name| {
             let path = home.join(name);
             let contents = match std::fs::read(&path) {
                 Ok(contents) => Some(contents),
@@ -129,8 +130,8 @@ fn credentials_snapshot(
                 Err(error) => return Err(error.into()),
             };
             Ok((path, contents))
-        })
-        .collect()
+        },
+    ))
 }
 
 fn assert_tokens_redacted(assertion: &assert_cmd::assert::Assert) {
@@ -154,10 +155,7 @@ fn assert_no_requests(registry: &Registry) {
 
 fn assert_owner_request(registry: &Registry, package: &str, token: &str) {
     let requests = registry.requests();
-    let puts = requests
-        .iter()
-        .filter(|request| request.method == "PUT")
-        .collect::<Vec<_>>();
+    let puts = Vec::from_iter(requests.iter().filter(|request| request.method == "PUT"));
     assert_eq!(
         puts.len(),
         1,
@@ -501,10 +499,11 @@ fn explicit_publish_false_selection_with_ignore_publish_is_a_noop() -> anyhow::R
 fn remove_publish_setting(workspace: &RegistryWorkspace, member: &str) -> anyhow::Result<()> {
     let path = workspace.workspace.path().join(member).join("Cargo.toml");
     let manifest = std::fs::read_to_string(&path)?;
-    let without_publish = manifest
-        .split_inclusive('\n')
-        .filter(|line| !line.starts_with("publish = "))
-        .collect::<String>();
+    let without_publish = String::from_iter(
+        manifest
+            .split_inclusive('\n')
+            .filter(|line| !line.starts_with("publish = ")),
+    );
     anyhow::ensure!(
         manifest != without_publish,
         "fixture {member} must have a publish setting"
@@ -566,10 +565,7 @@ fn standalone_add_owner_uses_saved_alternate_token_not_crates_io_token() -> anyh
         .success();
 
     let requests = workspace.registry.requests();
-    let puts = requests
-        .iter()
-        .filter(|request| request.method == "PUT")
-        .collect::<Vec<_>>();
+    let puts = Vec::from_iter(requests.iter().filter(|request| request.method == "PUT"));
     assert_eq!(
         puts.len(),
         1,
@@ -837,10 +833,7 @@ fn missing_any_unprovided_registry_login_fails_before_network_or_release_work() 
             let credentials = credentials_snapshot(&workspace)?;
             let manifests = [PACKAGE, SECOND_PACKAGE]
                 .map(|package| workspace.workspace.path().join(package).join("Cargo.toml"));
-            let before = manifests
-                .iter()
-                .map(std::fs::read)
-                .collect::<Result<Vec<_>, _>>()?;
+            let before = Result::<Vec<_>, _>::from_iter(manifests.iter().map(std::fs::read))?;
 
             let assertion = publication_command(&workspace, operation)?
                 .args(["--token", &format!("{provided}:{EXPLICIT_TOKEN}")])

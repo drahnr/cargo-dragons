@@ -67,10 +67,11 @@ fn reload_packages_from_worktree(
     ws: &Workspace<'_>,
     packages: &[Package],
 ) -> anyhow::Result<Vec<Package>> {
-    packages
-        .iter()
-        .map(|package| reload_package_from_workspace(gctx, ws, package))
-        .collect()
+    anyhow::Result::<Vec<_>>::from_iter(
+        packages
+            .iter()
+            .map(|package| reload_package_from_workspace(gctx, ws, package)),
+    )
 }
 
 pub fn release(
@@ -81,10 +82,11 @@ pub fn release(
     tokens: RegistryTokens,
     owner: Option<String>,
 ) -> Result<(), anyhow::Error> {
-    let registries = packages
-        .iter()
-        .map(|package| PublicationRegistry::for_package(gctx, package))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let registries = anyhow::Result::<Vec<_>>::from_iter(
+        packages
+            .iter()
+            .map(|package| PublicationRegistry::for_package(gctx, package)),
+    )?;
 
     let cli_features = CliFeatures {
         features: Default::default(),

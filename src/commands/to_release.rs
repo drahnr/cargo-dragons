@@ -237,16 +237,14 @@ where
 
     if !cycles.is_empty() {
         assert!(petgraph::algo::is_cyclic_directed(&graph));
-        let cycles = cycles
-            .iter()
-            .map(|nodes| {
+        let cycles = Vec::from_iter(cycles.iter().map(|nodes| {
+            Vec::from_iter(
                 nodes
                     .iter()
                     .map(|i| graph.node_weight(*i).unwrap())
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+                    .cloned(),
+            )
+        }));
         return Err(ErrorWithCycles(cycles, anyhow::anyhow!("Contains cycles")));
     }
 
@@ -478,10 +476,7 @@ publish = {publish}
         // level are ordered by their reverse appearance in the members declaration
         assert_eq!(
             vec!["closing", "dy", "dx", "top"],
-            to_release
-                .iter()
-                .map(|pkg| pkg.name().as_str())
-                .collect::<Vec<_>>()
+            Vec::from_iter(to_release.iter().map(|pkg| pkg.name().as_str()))
         );
         Ok(())
     }
@@ -571,17 +566,11 @@ publish = {publish}
 
         assert_eq!(
             vec!["already-there"],
-            plan.already_published
-                .iter()
-                .map(|pkg| pkg.name().as_str())
-                .collect::<Vec<_>>()
+            Vec::from_iter(plan.already_published.iter().map(|pkg| pkg.name().as_str()))
         );
         assert_eq!(
             vec!["dx", "top"],
-            plan.to_release
-                .iter()
-                .map(|pkg| pkg.name().as_str())
-                .collect::<Vec<_>>()
+            Vec::from_iter(plan.to_release.iter().map(|pkg| pkg.name().as_str()))
         );
         Ok(())
     }
@@ -610,10 +599,7 @@ publish = {publish}
         // The start node is defined by the sequence in the members declaration
         assert_eq!(
             vec!["a", "b", "c"],
-            cycles[0]
-                .iter()
-                .map(|pkg| pkg.name().as_str())
-                .collect::<Vec<_>>()
+            Vec::from_iter(cycles[0].iter().map(|pkg| pkg.name().as_str()))
         );
         Ok(())
     }
@@ -655,10 +641,7 @@ publish = {publish}
             tmp.path().join("larger-diamond.dot"),
         )
         .expect("larger diamond is acyclic");
-        let names = to_release
-            .iter()
-            .map(|pkg| pkg.name().as_str())
-            .collect::<Vec<_>>();
+        let names = Vec::from_iter(to_release.iter().map(|pkg| pkg.name().as_str()));
 
         assert_eq!(names.len(), 7);
         assert_eq!(
@@ -722,10 +705,7 @@ publish = {publish}
         )
         .unwrap_err();
         assert_eq!(cycles.len(), 1);
-        let cycle_names = cycles[0]
-            .iter()
-            .map(|pkg| pkg.name().as_str())
-            .collect::<HashSet<_>>();
+        let cycle_names = HashSet::from_iter(cycles[0].iter().map(|pkg| pkg.name().as_str()));
         assert_eq!(cycle_names, HashSet::from(["a", "b", "c", "d", "e", "f"]));
         Ok(())
     }

@@ -67,16 +67,17 @@ mod tests {
     use cargo::core::FeatureMap;
 
     fn definitions() -> FeatureMap {
-        [
-            (
-                "default".into(),
-                vec![FeatureValue::Feature("backend-a".into())],
-            ),
-            ("backend-a".into(), vec![]),
-            ("backend-b".into(), vec![]),
-        ]
-        .into_iter()
-        .collect()
+        FeatureMap::from_iter(
+            [
+                (
+                    "default".into(),
+                    vec![FeatureValue::Feature("backend-a".into())],
+                ),
+                ("backend-a".into(), vec![]),
+                ("backend-b".into(), vec![]),
+            ]
+            .into_iter(),
+        )
     }
 
     fn consolidated(
@@ -84,7 +85,7 @@ mod tests {
         uses_default_features: bool,
         definitions: &FeatureMap,
     ) -> anyhow::Result<Vec<String>> {
-        let requested = requested.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let requested = Vec::from_iter(requested.iter().map(|s| s.to_string()));
         let cli = CliFeatures::from_command_line(&requested)?;
         let features = if uses_default_features {
             cli.with_default(definitions.get("default"))
@@ -94,11 +95,9 @@ mod tests {
         let cargo_features = features.to_cargo();
         assert!(!cargo_features.all_features);
         assert!(!cargo_features.uses_default_features);
-        Ok(cargo_features
-            .features
-            .iter()
-            .map(ToString::to_string)
-            .collect())
+        Ok(Vec::from_iter(
+            cargo_features.features.iter().map(ToString::to_string),
+        ))
     }
 
     #[test]
@@ -163,7 +162,7 @@ mod tests {
 
     #[test]
     fn with_default_preserves_an_empty_default_group() -> anyhow::Result<()> {
-        let definitions = [("default".into(), vec![])].into_iter().collect();
+        let definitions = FeatureMap::from_iter([("default".into(), vec![])].into_iter());
         assert_eq!(consolidated(&[], true, &definitions)?, ["default"]);
         Ok(())
     }

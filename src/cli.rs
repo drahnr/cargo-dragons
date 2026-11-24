@@ -632,17 +632,14 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
         } => {
             let predicate = make_pkg_predicate(&gctx, &ws, pkg_opts)?;
 
-            let packages = ws
-                .members()
-                .filter(|p| {
-                    !matches!(p.publish(), Some(registries) if registries.is_empty())
-                        && predicate(p)
-                })
-                .collect::<Vec<_>>();
-            let registries = packages
-                .iter()
-                .map(|package| PublicationRegistry::for_package(&gctx, package))
-                .collect::<anyhow::Result<Vec<_>>>()?;
+            let packages = Vec::from_iter(ws.members().filter(|p| {
+                !matches!(p.publish(), Some(registries) if registries.is_empty()) && predicate(p)
+            }));
+            let registries = anyhow::Result::<Vec<_>>::from_iter(
+                packages
+                    .iter()
+                    .map(|package| PublicationRegistry::for_package(&gctx, package)),
+            )?;
             let tokens = RegistryTokens::from_cli(token, registries.iter().map(|r| r.name()))?;
             tokens.ensure_logins(&gctx, &registries)?;
             for (pkg, registry) in packages.into_iter().zip(&registries) {
@@ -835,7 +832,7 @@ pub fn run(args: Args) -> Result<(), anyhow::Error> {
                     packages
                         .retain(|package| !explicitly_selected.contains(package.name().as_str()));
                 } else if explicitly_selected.is_disjoint(&to_release) && !packages.is_empty() {
-                    let mut selected = explicitly_selected.iter().cloned().collect::<Vec<_>>();
+                    let mut selected = Vec::from_iter(explicitly_selected.iter().cloned());
                     selected.sort();
                     anyhow::bail!(
                         "Refusing to unleash only dependencies. \

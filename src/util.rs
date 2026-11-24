@@ -68,8 +68,8 @@ pub fn changed_packages(
 }
 
 pub fn members_deep(gctx: &GlobalContext, ws: &'_ Workspace) -> Vec<Package> {
-    let mut total_list: Vec<_> = ws.members().cloned().collect();
-    let mut seen: HashSet<_> = total_list.iter().map(|p| p.package_id()).collect();
+    let mut total_list: Vec<_> = Vec::from_iter(ws.members().cloned());
+    let mut seen: HashSet<_> = HashSet::from_iter(total_list.iter().map(|p| p.package_id()));
     let mut next = 0;
     while next < total_list.len() {
         let m = total_list[next].clone();
@@ -345,21 +345,22 @@ fn ranked_available_packages<'a>(
     package_names: &'a [String],
 ) -> Vec<&'a String> {
     let Some(selector) = selector else {
-        return package_names.iter().collect();
+        return Vec::from_iter(package_names.iter());
     };
     let selector = selector.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_');
-    let mut ranked = package_names.iter().collect::<Vec<_>>();
+    let mut ranked = Vec::from_iter(package_names.iter());
     ranked.sort_by_key(|name| (levenshtein(selector, name), name.as_str()));
     ranked
 }
 
 fn format_available_packages(selector: Option<&str>, package_names: &[String]) -> String {
     let ranked = ranked_available_packages(selector, package_names);
-    let mut lines = ranked
-        .iter()
-        .take(MAX_AVAILABLE_PACKAGE_SUGGESTIONS)
-        .map(|name| format!("  - {}", bold_package_name(name)))
-        .collect::<Vec<_>>();
+    let mut lines = Vec::from_iter(
+        ranked
+            .iter()
+            .take(MAX_AVAILABLE_PACKAGE_SUGGESTIONS)
+            .map(|name| format!("  - {}", bold_package_name(name))),
+    );
 
     if ranked.len() > MAX_AVAILABLE_PACKAGE_SUGGESTIONS {
         lines.push(format!(
@@ -382,8 +383,8 @@ fn closest_package_suggestion<'a>(selector: &str, package_names: &'a [String]) -
 }
 
 fn levenshtein(left: &str, right: &str) -> usize {
-    let right_chars = right.chars().collect::<Vec<_>>();
-    let mut previous = (0..=right_chars.len()).collect::<Vec<_>>();
+    let right_chars = Vec::from_iter(right.chars());
+    let mut previous = Vec::from_iter(0..=right_chars.len());
     let mut current = vec![0; right_chars.len() + 1];
 
     for (left_index, left_char) in left.chars().enumerate() {
@@ -726,9 +727,7 @@ default-features = false
 
     #[test]
     fn available_package_listing_is_bold_and_capped() {
-        let packages = (0..12)
-            .map(|index| format!("crate-{index}"))
-            .collect::<Vec<_>>();
+        let packages = Vec::from_iter((0..12).map(|index| format!("crate-{index}")));
 
         let listing = format_available_packages(None, &packages);
 

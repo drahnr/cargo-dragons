@@ -20,7 +20,7 @@ impl RegistryTokens {
         tokens: Vec<String>,
         registry_names: impl IntoIterator<Item = &'a str>,
     ) -> anyhow::Result<Self> {
-        let names = registry_names.into_iter().collect::<BTreeSet<_>>();
+        let names = BTreeSet::from_iter(registry_names);
         let mut resolved = BTreeMap::new();
         for value in tokens {
             let (name, token) = match value.split_once(':') {
@@ -216,7 +216,7 @@ mod tests {
             ["crates-io", "fff-rs"],
         )?;
         assert_eq!(
-            tokens.0.keys().map(String::as_str).collect::<Vec<_>>(),
+            Vec::from_iter(tokens.0.keys().map(String::as_str)),
             ["crates-io", "fff-rs"]
         );
         Ok(())
@@ -227,7 +227,7 @@ mod tests {
         let tokens =
             RegistryTokens::from_cli(vec!["private-token".to_owned()], ["fff-rs", "fff-rs"])?;
         assert_eq!(
-            tokens.0.keys().map(String::as_str).collect::<Vec<_>>(),
+            Vec::from_iter(tokens.0.keys().map(String::as_str)),
             ["fff-rs"]
         );
         Ok(())
