@@ -183,6 +183,10 @@ pub struct PackageSelectOptions {
     #[clap(long)]
     pub include_pre_deps: bool,
 
+    /// Also select publishable local normal and build dependencies, recursively.
+    #[clap(long)]
+    pub include_deps: bool,
+
     /// List available packages and exit.
     #[clap(long)]
     pub list_packages: bool,

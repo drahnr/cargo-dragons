@@ -25,6 +25,47 @@ fn check_include_pre() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn include_deps_checks_unpublished_stable_transitive_path_dependencies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ws = TestWorkspace::from_fixture("dev-dep-cycle")?;
+    let leaf = ws.path().join("cycle-leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(leaf.join("src/lib.rs"), "pub fn leaf() {}")?;
+    fs::write(
+        leaf.join("Cargo.toml"),
+        r#"[package]
+name = "cycle-leaf"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Transitive fixture"
+repository = "https://example.com"
+"#,
+    )?;
+    let helper = ws.path().join("cycle-helper/Cargo.toml");
+    let manifest = fs::read_to_string(&helper)?;
+    fs::write(
+        helper,
+        format!(
+            "{manifest}\n[dependencies]\ncycle-leaf = {{ path = \"../cycle-leaf\", version = \"0.0.1\" }}\n"
+        ),
+    )?;
+
+    ws.cargo_dragons()?
+        .args(["to-release", "-p", "cycle-consumer", "--include-deps"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "cycle-leaf (0.0.1), cycle-helper (0.1.0), cycle-consumer (0.1.0)",
+        ));
+    ws.cargo_dragons()?
+        .args(["check", "-p", "cycle-consumer", "--include-deps"])
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
 fn to_release_selects_all_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let ws = TestWorkspace::from_fixture("simple-base")?;
 

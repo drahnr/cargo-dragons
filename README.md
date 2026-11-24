@@ -144,6 +144,16 @@ OPTIONS:
             Each selected registry needs an explicit token or Cargo credentials, even during a dry run.
 ```
 
+### First release of local dependencies
+
+When releasing a package with unpublished path dependencies, use
+`cargo dragons unleash -p PACKAGE --include-deps`. This adds publishable local
+normal and build dependencies recursively, checks the packaged crates together,
+and publishes their actual versions in dependency order. Exact versions already
+on their publication registry are skipped. Dev-only dependencies are not added.
+Use `to-release -p PACKAGE --include-deps` to preview the plan. A placeholder
+prerelease does not satisfy a requirement for a stable version.
+
 ### Registry selection and authentication
 
 The publication destination is resolved per package, consistently for login checks,

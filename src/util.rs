@@ -68,9 +68,12 @@ pub fn changed_packages(
 }
 
 pub fn members_deep(gctx: &GlobalContext, ws: &'_ Workspace) -> Vec<Package> {
-    let mut total_list = Vec::new();
-    for m in ws.members() {
-        total_list.push(m.clone());
+    let mut total_list: Vec<_> = ws.members().cloned().collect();
+    let mut seen: HashSet<_> = total_list.iter().map(|p| p.package_id()).collect();
+    let mut next = 0;
+    while next < total_list.len() {
+        let m = total_list[next].clone();
+        next += 1;
         for dep in m.dependencies() {
             if dep.kind() == DepKind::Development {
                 trace!(
@@ -89,7 +92,7 @@ pub fn members_deep(gctx: &GlobalContext, ws: &'_ Workspace) -> Vec<Package> {
                     .expect("It was just checked before. qed");
                 let mut src = PathSource::new(&dst, source, gctx);
                 let pkg = src.root_package().expect("Path must have a package");
-                if !ws.is_member(&pkg) {
+                if seen.insert(pkg.package_id()) {
                     total_list.push(pkg);
                 }
             }
@@ -410,6 +413,7 @@ pub(crate) fn make_pkg_predicate(
         ignore_publish,
         changed_since,
         include_pre_deps,
+        include_deps,
         list_packages: _,
     } = args;
 
@@ -489,8 +493,8 @@ pub(crate) fn make_pkg_predicate(
         true
     };
 
-    let mut selected_pre_dependencies = HashSet::new();
-    if include_pre_deps {
+    let mut selected_dependencies = HashSet::new();
+    if include_pre_deps || include_deps {
         let members_by_name = HashMap::<String, &Package>::from_iter(
             members.iter().map(|p| (p.name().as_str().to_owned(), p)),
         );
@@ -512,9 +516,16 @@ pub(crate) fn make_pkg_predicate(
                     continue;
                 };
 
+                let include_path_dep = include_deps
+                    && dep.kind() != DepKind::Development
+                    && dep.source_id().is_path()
+                    && dep.matches_ignoring_source(dep_package.package_id())
+                    && dep.source_id().url().to_file_path().ok().as_deref()
+                        == dep_package.manifest_path().parent();
                 if is_publishable(dep_package, ignore_publish)
-                    && !dep_package.version().pre.is_empty()
-                    && selected_pre_dependencies.insert(dep_name.to_owned())
+                    && (include_path_dep
+                        || (include_pre_deps && !dep_package.version().pre.is_empty()))
+                    && selected_dependencies.insert(dep_package.package_id())
                 {
                     stack.push(dep_name.to_owned());
                 }
@@ -527,7 +538,7 @@ pub(crate) fn make_pkg_predicate(
             return false;
         }
 
-        base_selected(p) || selected_pre_dependencies.contains(p.name().as_str())
+        base_selected(p) || selected_dependencies.contains(&p.package_id())
     })
 }
 
